@@ -40,6 +40,19 @@ export default function App() {
     window.history.pushState({}, '', url.toString());
   }, []);
 
+  // Listen for browser back/forward navigation
+  useEffect(() => {
+    const handlePopState = () => {
+      const params = new URLSearchParams(window.location.search);
+      const urlDate = params.get('date');
+      if (urlDate && /^\d{4}-\d{2}-\d{2}$/.test(urlDate)) {
+        setSelectedBusinessDate(urlDate);
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
   const fetchStats = useCallback(async (dateToQuery?: string) => {
     const d = dateToQuery || selectedBusinessDate;
     try {
@@ -151,6 +164,7 @@ export default function App() {
           {currentTab === 'printed' && (
             <PrintedView
               initialSubTab={printedSubTab}
+              selectedDate={selectedBusinessDate}
               onSelectOrder={(code) => setSelectedOrderCode(code)}
             />
           )}
@@ -158,6 +172,7 @@ export default function App() {
           {currentTab === 'pending' && (
             <PendingProcessingView
               statusType="Pending"
+              selectedDate={selectedBusinessDate}
               onSelectOrder={(code) => setSelectedOrderCode(code)}
             />
           )}
@@ -165,6 +180,7 @@ export default function App() {
           {currentTab === 'processing' && (
             <PendingProcessingView
               statusType="Processing"
+              selectedDate={selectedBusinessDate}
               onSelectOrder={(code) => setSelectedOrderCode(code)}
             />
           )}
@@ -185,7 +201,10 @@ export default function App() {
           )}
 
           {currentTab === 'alerts' && (
-            <AlertsView onSelectOrder={(code) => setSelectedOrderCode(code)} />
+            <AlertsView
+              selectedDate={selectedBusinessDate}
+              onSelectOrder={(code) => setSelectedOrderCode(code)}
+            />
           )}
 
           {currentTab === 'sync_health' && (

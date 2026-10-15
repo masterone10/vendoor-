@@ -23,6 +23,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
   const [lowDeliveryOnly, setLowDeliveryOnly] = useState(false);
 
   const limit = 50;
+  const activeRequestIdRef = React.useRef<number>(0);
 
   useEffect(() => {
     setStatus(initialStatus);
@@ -34,6 +35,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
   }, [status, page, multiOnly, lowDeliveryOnly, selectedDate]);
 
   async function fetchOrders() {
+    const requestId = ++activeRequestIdRef.current;
     setLoading(true);
     try {
       const params = new URLSearchParams();
@@ -47,12 +49,18 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
 
       const res = await fetch(`/api/orders?${params.toString()}`);
       const data = await res.json();
-      setOrders(data.orders || []);
-      setTotal(data.total || 0);
+      if (requestId === activeRequestIdRef.current) {
+        setOrders(data.orders || []);
+        setTotal(data.total || 0);
+      }
     } catch (err) {
-      console.error('Error fetching orders:', err);
+      if (requestId === activeRequestIdRef.current) {
+        console.error('Error fetching orders:', err);
+      }
     } finally {
-      setLoading(false);
+      if (requestId === activeRequestIdRef.current) {
+        setLoading(false);
+      }
     }
   }
 
@@ -76,7 +84,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
             </span>
           </h2>
           <p className="text-xs text-slate-400 mt-1">
-            البحث في كافة الطلبات المستخرجة من Vendoor مع فلاتر الحالات ونسب الاستلام وتعدد التجار
+            البحث في كافة الطلبات المستخرجة من Vendoor مع فلاتر الحالات ونسب الاستلام وتعدد المخازن
           </p>
         </div>
 
@@ -111,7 +119,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
             }`}
           >
             <AlertTriangle className="w-3.5 h-3.5" />
-            <span>تعدد التجار فقط</span>
+            <span>تعدد المخازن فقط</span>
           </button>
 
           <button
@@ -161,7 +169,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                 <th className="py-3 px-4 font-semibold">العميل</th>
                 <th className="py-3 px-4 font-semibold">الهاتف</th>
                 <th className="py-3 px-4 font-semibold">المحافظة</th>
-                <th className="py-3 px-4 font-semibold">أكواد التجار</th>
+                <th className="py-3 px-4 font-semibold">المخازن</th>
                 <th className="py-3 px-4 font-semibold">نسبة التسليم</th>
                 <th className="py-3 px-4 font-semibold">الإجمالي</th>
                 <th className="py-3 px-4 font-semibold">تاريخ الإنشاء</th>
@@ -232,15 +240,15 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                         {order.governorate || '—'}
                       </td>
 
-                      {/* Merchant Codes */}
+                      {/* Warehouse Codes */}
                       <td className="py-3 px-4">
                         {order.distinct_merchant_count > 1 ? (
                           <span className="text-rose-400 font-bold inline-flex items-center gap-1">
                             <AlertTriangle className="w-3.5 h-3.5" />
-                            <span>{order.distinct_merchant_count} تجار</span>
+                            <span>{order.distinct_merchant_count} مخازن</span>
                           </span>
                         ) : (
-                          <span className="text-slate-400 text-xs">تاجر واحد</span>
+                          <span className="text-slate-400 text-xs">مخزن واحد</span>
                         )}
                       </td>
 

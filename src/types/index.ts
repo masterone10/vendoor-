@@ -50,6 +50,13 @@ export interface Order {
   state_entry_at: string | null;
   created_at_source: string;
   last_observed_at: string;
+  latest_action_at?: string | null;
+  latest_action_text?: string | null;
+  latest_action_actor?: string | null;
+  ageReferenceType?: 'ORDER_CREATION' | 'LATEST_LOG_ACTION';
+  ageReferenceTimestamp?: string | null;
+  ageInDays?: number | null;
+  ageBucket?: 'less_than_2_days' | '2_to_4_days' | '4_to_5_days' | 'over_5_days' | 'unknown';
 }
 
 export interface Alert {
@@ -79,6 +86,7 @@ export interface Alert {
 export interface DashboardStats {
   selectedDate?: string;
   isToday?: boolean;
+  isFuture?: boolean;
   storageTier?: 'HOT' | 'COLD';
   coverageStatus?: string;
   isCached?: boolean;
@@ -113,6 +121,7 @@ export interface DashboardStats {
     Canceled: number;
   };
   pendingAge: {
+    lessThanTwoDays?: number;
     twoToFourDays: number;
     fourToFiveDays: number;
     overFiveDays: number;
@@ -120,6 +129,7 @@ export interface DashboardStats {
     total: number;
   };
   processingAge: {
+    lessThanTwoDays?: number;
     twoToFourDays: number;
     fourToFiveDays: number;
     overFiveDays: number;

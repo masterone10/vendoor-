@@ -258,10 +258,10 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ orderCode,
                 <div className="flex items-center justify-between">
                   <h4 className="font-bold text-slate-200 flex items-center gap-2">
                     <ShoppingBag className="w-4 h-4 text-amber-400" />
-                    <span>أصناف الطلب وتوزيع التجار ({items.length} صنف)</span>
+                    <span>أصناف الطلب وتوزيع المخازن ({items.length} صنف)</span>
                   </h4>
                   <span className="text-slate-400">
-                    عدد التجار المميزين: <strong className="text-amber-400 font-mono">{order.distinct_merchant_count}</strong>
+                    عدد المخازن: <strong className="text-amber-400 font-mono">{order.distinct_merchant_count}</strong>
                   </span>
                 </div>
 
@@ -271,7 +271,7 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ orderCode,
                       <tr className="border-b border-slate-800 bg-slate-950/80 text-slate-400">
                         <th className="py-2.5 px-3">م</th>
                         <th className="py-2.5 px-3">اسم الصنف</th>
-                        <th className="py-2.5 px-3">كود التاجر / المخزن</th>
+                        <th className="py-2.5 px-3">كود المخزن</th>
                         <th className="py-2.5 px-3">الكود / SKU</th>
                         <th className="py-2.5 px-3">اللون</th>
                         <th className="py-2.5 px-3">المقاس</th>

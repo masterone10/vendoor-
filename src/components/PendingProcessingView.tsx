@@ -1,45 +1,71 @@
-import React, { useState, useEffect } from 'react';
-import { Clock, RotateCw, Search, Eye, AlertTriangle } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Clock, RotateCw, Search, Eye, AlertTriangle, Calendar } from 'lucide-react';
 import { Order } from '../types';
 
 interface PendingProcessingViewProps {
   statusType: 'Pending' | 'Processing';
+  selectedDate?: string;
   onSelectOrder: (orderCode: string) => void;
 }
 
 export const PendingProcessingView: React.FC<PendingProcessingViewProps> = ({
   statusType,
+  selectedDate,
   onSelectOrder,
 }) => {
   const [orders, setOrders] = useState<any[]>([]);
+  const [totalAllCount, setTotalAllCount] = useState<number>(0);
+  const [showAllDates, setShowAllDates] = useState<boolean>(false);
   const [loading, setLoading] = useState(false);
-  const [selectedAgeBucket, setSelectedAgeBucket] = useState<'all' | '2_to_4_days' | '4_to_5_days' | 'over_5_days'>('all');
+  const [selectedAgeBucket, setSelectedAgeBucket] = useState<'all' | 'less_than_2_days' | '2_to_4_days' | '4_to_5_days' | 'over_5_days' | 'unknown'>('all');
   const [search, setSearch] = useState('');
+  const activeRequestIdRef = useRef<number>(0);
 
   useEffect(() => {
     fetchOrders();
-  }, [statusType]);
+  }, [statusType, selectedDate, showAllDates]);
 
   async function fetchOrders() {
+    const requestId = ++activeRequestIdRef.current;
     setLoading(true);
     try {
       const endpoint = statusType === 'Pending' ? '/api/pending' : '/api/processing';
-      const res = await fetch(endpoint);
+      const params = new URLSearchParams();
+      if (selectedDate && !showAllDates) {
+        params.set('date', selectedDate);
+      }
+      if (showAllDates) {
+        params.set('allDates', '1');
+      }
+
+      const res = await fetch(`${endpoint}?${params.toString()}`);
       const data = await res.json();
-      setOrders(data.orders || []);
+      // Ignore response if another request was triggered in the meantime
+      if (requestId === activeRequestIdRef.current) {
+        setOrders(data.orders || []);
+        if (data.totalAllCount !== undefined) {
+          setTotalAllCount(data.totalAllCount);
+        }
+      }
     } catch (err) {
-      console.error(`Error fetching ${statusType} orders:`, err);
+      if (requestId === activeRequestIdRef.current) {
+        console.error(`Error fetching ${statusType} orders:`, err);
+      }
     } finally {
-      setLoading(false);
+      if (requestId === activeRequestIdRef.current) {
+        setLoading(false);
+      }
     }
   }
 
-  // Count by age bucket
+  // Count by age bucket - exact mutually exclusive boundaries
   const bucketCounts = {
     all: orders.length,
+    less_than_2_days: orders.filter(o => o.ageBucket === 'less_than_2_days').length,
     '2_to_4_days': orders.filter(o => o.ageBucket === '2_to_4_days').length,
     '4_to_5_days': orders.filter(o => o.ageBucket === '4_to_5_days').length,
     over_5_days: orders.filter(o => o.ageBucket === 'over_5_days').length,
+    unknown: orders.filter(o => o.ageBucket === 'unknown').length,
   };
 
   const filtered = orders.filter((o) => {
@@ -85,12 +111,35 @@ export const PendingProcessingView: React.FC<PendingProcessingViewProps> = ({
             </span>
           </h2>
           <p className="text-xs text-slate-400 mt-1">
-            متابعة عمر الحالة الحالية ومنع تجاوز المهلات التشغيلية
+            {isPending
+              ? 'عمر الطلب محسوب حصراً من تاريخ الإنشاء الأصلي في فيندور (ولا يتأثر بالملاحظات أو التزامن)'
+              : 'عمر الحالة محسوب من تاريخ آخر حركة فعلية موثقة بسجلات النظام (مع الاحتفاظ بوصف الحركة)'}
           </p>
         </div>
 
+        {/* Date Scope Filter Toggle */}
+        {selectedDate && (
+          <div className="flex items-center gap-2 bg-slate-900/80 border border-slate-800 rounded-lg px-3 py-1.5 text-xs">
+            <Calendar className="w-3.5 h-3.5 text-amber-400" />
+            <span className="text-slate-400">التاريخ:</span>
+            {!showAllDates ? (
+              <span className="font-mono text-amber-300 font-semibold bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded">
+                {selectedDate}
+              </span>
+            ) : (
+              <span className="text-slate-300">كافة التواريخ</span>
+            )}
+            <button
+              onClick={() => setShowAllDates(!showAllDates)}
+              className="mr-2 text-[11px] px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer"
+            >
+              {showAllDates ? `حصر باليوم المحدد` : `عرض الكل (${totalAllCount})`}
+            </button>
+          </div>
+        )}
+
         {/* Age Buckets Filter */}
-        <div className="flex items-center gap-1.5 p-1 bg-slate-900 border border-slate-800 rounded-lg text-xs font-medium">
+        <div className="flex flex-wrap items-center gap-1.5 p-1 bg-slate-900 border border-slate-800 rounded-lg text-xs font-medium">
           <button
             onClick={() => setSelectedAgeBucket('all')}
             className={`px-3 py-1.5 rounded-md transition-all cursor-pointer ${
@@ -100,6 +149,16 @@ export const PendingProcessingView: React.FC<PendingProcessingViewProps> = ({
             }`}
           >
             الكل ({bucketCounts.all})
+          </button>
+          <button
+            onClick={() => setSelectedAgeBucket('less_than_2_days')}
+            className={`px-3 py-1.5 rounded-md transition-all cursor-pointer ${
+              selectedAgeBucket === 'less_than_2_days'
+                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shadow-sm'
+                : 'text-slate-400 hover:text-emerald-400'
+            }`}
+          >
+            أقل من يومين ({bucketCounts.less_than_2_days})
           </button>
           <button
             onClick={() => setSelectedAgeBucket('2_to_4_days')}
@@ -131,6 +190,18 @@ export const PendingProcessingView: React.FC<PendingProcessingViewProps> = ({
           >
             أكثر من 5 أيام ({bucketCounts.over_5_days})
           </button>
+          {bucketCounts.unknown > 0 && (
+            <button
+              onClick={() => setSelectedAgeBucket('unknown')}
+              className={`px-3 py-1.5 rounded-md transition-all cursor-pointer ${
+                selectedAgeBucket === 'unknown'
+                  ? 'bg-slate-700 text-slate-200 border border-slate-600 shadow-sm'
+                  : 'text-slate-500 hover:text-slate-300'
+              }`}
+            >
+              غير محدد ({bucketCounts.unknown})
+            </button>
+          )}
         </div>
       </div>
 
@@ -158,9 +229,13 @@ export const PendingProcessingView: React.FC<PendingProcessingViewProps> = ({
                 <th className="py-3 px-4 font-semibold">العميل</th>
                 <th className="py-3 px-4 font-semibold">الهاتف</th>
                 <th className="py-3 px-4 font-semibold">المحافظة</th>
-                <th className="py-3 px-4 font-semibold">عمر الحالة الحالية</th>
-                <th className="py-3 px-4 font-semibold">تاريخ الإنشاء</th>
-                <th className="py-3 px-4 font-semibold">أكواد التجار</th>
+                <th className="py-3 px-4 font-semibold">
+                  {isPending ? 'عمر الطلب (من الإنشاء)' : 'عمر الحالة (من آخر حركة)'}
+                </th>
+                <th className="py-3 px-4 font-semibold">
+                  {isPending ? 'تاريخ الإنشاء الأصلي' : 'آخر حركة مسجلة بالسجلات'}
+                </th>
+                <th className="py-3 px-4 font-semibold">المخازن</th>
                 <th className="py-3 px-4 font-semibold">الإجمالي</th>
                 <th className="py-3 px-4 font-semibold text-center">إجراء</th>
               </tr>
@@ -180,8 +255,8 @@ export const PendingProcessingView: React.FC<PendingProcessingViewProps> = ({
                 </tr>
               ) : (
                 filtered.map((order) => {
-                  const isCriticalAge = order.ageInDays > 5;
-                  const isWarningAge = order.ageInDays >= 4 && order.ageInDays <= 5;
+                  const isCriticalAge = order.ageInDays !== null && order.ageInDays > 5;
+                  const isWarningAge = order.ageInDays !== null && order.ageInDays >= 4 && order.ageInDays <= 5;
 
                   return (
                     <tr
@@ -217,31 +292,50 @@ export const PendingProcessingView: React.FC<PendingProcessingViewProps> = ({
                       <td className="py-3 px-4">
                         <span
                           className={`font-mono font-semibold ${
-                            isCriticalAge
+                            order.ageInDays === null
+                              ? 'text-slate-500'
+                              : isCriticalAge
                               ? 'text-rose-400'
                               : isWarningAge
                               ? 'text-amber-400'
                               : 'text-slate-300'
                           }`}
                         >
-                          {order.ageInDays} يوم
+                          {order.ageInDays !== null ? `${order.ageInDays} يوم` : 'غير محدد'}
                         </span>
                       </td>
 
-                      {/* Created At */}
-                      <td className="py-3 px-4 text-slate-400 font-mono text-[11px]">
-                        {order.created_at_source || '—'}
+                      {/* Reference Timestamp & Audit Info */}
+                      <td className="py-3 px-4 text-slate-400 text-[11px]">
+                        {isPending ? (
+                          <span className="font-mono">{order.created_at_source || '—'}</span>
+                        ) : order.latest_action_at ? (
+                          <div className="space-y-0.5">
+                            <div className="font-mono text-sky-400">{order.latest_action_at}</div>
+                            {order.latest_action_text && (
+                              <div
+                                className="text-[10px] text-slate-400 truncate max-w-xs"
+                                title={`${order.latest_action_actor || ''}: ${order.latest_action_text}`}
+                              >
+                                {order.latest_action_actor ? `${order.latest_action_actor}: ` : ''}
+                                {order.latest_action_text}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-slate-500 italic">لا توجد حركات موثقة</span>
+                        )}
                       </td>
 
-                      {/* Merchant Codes */}
+                      {/* Warehouse Codes */}
                       <td className="py-3 px-4">
                         {order.distinct_merchant_count > 1 ? (
                           <span className="text-rose-400 font-bold inline-flex items-center gap-1">
                             <AlertTriangle className="w-3.5 h-3.5" />
-                            <span>{order.distinct_merchant_count} تجار</span>
+                            <span>{order.distinct_merchant_count} مخازن</span>
                           </span>
                         ) : (
-                          <span className="text-slate-400 text-xs">تاجر واحد</span>
+                          <span className="text-slate-400 text-xs">مخزن واحد</span>
                         )}
                       </td>
 

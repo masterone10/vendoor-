@@ -19,6 +19,7 @@ export const PrintedView: React.FC<PrintedViewProps> = ({
   const [showAllDates, setShowAllDates] = useState<boolean>(false);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
+  const activeRequestIdRef = React.useRef<number>(0);
 
   useEffect(() => {
     setSubTab(initialSubTab);
@@ -29,6 +30,7 @@ export const PrintedView: React.FC<PrintedViewProps> = ({
   }, [subTab, selectedDate, showAllDates]);
 
   async function fetchPrintedOrders() {
+    const requestId = ++activeRequestIdRef.current;
     setLoading(true);
     try {
       const params = new URLSearchParams();
@@ -42,14 +44,20 @@ export const PrintedView: React.FC<PrintedViewProps> = ({
 
       const res = await fetch(`/api/printed?${params.toString()}`);
       const data = await res.json();
-      setOrders(data.orders || []);
-      if (data.totalAllCount !== undefined) {
-        setTotalAllCount(data.totalAllCount);
+      if (requestId === activeRequestIdRef.current) {
+        setOrders(data.orders || []);
+        if (data.totalAllCount !== undefined) {
+          setTotalAllCount(data.totalAllCount);
+        }
       }
     } catch (err) {
-      console.error('Error fetching printed orders:', err);
+      if (requestId === activeRequestIdRef.current) {
+        console.error('Error fetching printed orders:', err);
+      }
     } finally {
-      setLoading(false);
+      if (requestId === activeRequestIdRef.current) {
+        setLoading(false);
+      }
     }
   }
 
@@ -122,7 +130,7 @@ export const PrintedView: React.FC<PrintedViewProps> = ({
             }`}
           >
             <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
-            <span>فئة ب: تعدد أكواد التجار</span>
+            <span>فئة ب: تعدد المخازن</span>
           </button>
           <button
             onClick={() => setSubTab('no_extra_phone')}
@@ -166,7 +174,6 @@ export const PrintedView: React.FC<PrintedViewProps> = ({
             <span>نسبة تسليم غير معروفة</span>
           </button>
         </div>
-      </div>
 
       {/* Search Input */}
       <div className="flex items-center gap-3">
@@ -193,7 +200,7 @@ export const PrintedView: React.FC<PrintedViewProps> = ({
                 <th className="py-3 px-4 font-semibold">الهاتف الأساسي</th>
                 <th className="py-3 px-4 font-semibold">الهاتف الإضافي</th>
                 <th className="py-3 px-4 font-semibold">المحافظة</th>
-                <th className="py-3 px-4 font-semibold">أكواد التجار</th>
+                <th className="py-3 px-4 font-semibold">المخازن</th>
                 <th className="py-3 px-4 font-semibold">نسبة التسليم</th>
                 <th className="py-3 px-4 font-semibold">الإجمالي</th>
                 <th className="py-3 px-4 font-semibold">تاريخ الطباعة</th>
@@ -273,16 +280,16 @@ export const PrintedView: React.FC<PrintedViewProps> = ({
                         {order.governorate || '—'}
                       </td>
 
-                      {/* Merchant Codes */}
+                      {/* Warehouse Codes */}
                       <td className="py-3 px-4">
                         {isMulti ? (
                           <span className="inline-flex items-center gap-1 text-rose-400 font-bold">
                             <AlertTriangle className="w-3.5 h-3.5" />
-                            <span>{order.distinct_merchant_count} تجار</span>
+                            <span>{order.distinct_merchant_count} مخازن</span>
                           </span>
                         ) : (
                           <span className="text-slate-400 text-xs">
-                            تاجر واحد ({order.distinct_merchant_count})
+                            مخزن واحد ({order.distinct_merchant_count})
                           </span>
                         )}
                       </td>

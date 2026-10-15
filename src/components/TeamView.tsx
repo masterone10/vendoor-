@@ -18,6 +18,7 @@ export const TeamView: React.FC<TeamViewProps> = ({ selectedDate, onSelectOrder 
   const [selectedMember, setSelectedMember] = useState<string | null>(null);
   const [memberEvents, setMemberEvents] = useState<any[]>([]);
   const [eventsLoading, setEventsLoading] = useState(false);
+  const activeRequestIdRef = React.useRef<number>(0);
 
   useEffect(() => {
     if (selectedDate) {
@@ -31,6 +32,7 @@ export const TeamView: React.FC<TeamViewProps> = ({ selectedDate, onSelectOrder 
   }, [period, customDate]);
 
   async function fetchTeamData() {
+    const requestId = ++activeRequestIdRef.current;
     setLoading(true);
     try {
       let url = '/api/team?period=today';
@@ -45,14 +47,20 @@ export const TeamView: React.FC<TeamViewProps> = ({ selectedDate, onSelectOrder 
       }
       const res = await fetch(url);
       const data = await res.json();
-      setTeam(data.team || []);
-      setTotalActions(data.totalActions || 0);
-      setTotalUniqueOrders(data.totalUniqueOrders || 0);
-      setDateFilterLabel(data.dateFilter || customDate || selectedDate || '');
+      if (requestId === activeRequestIdRef.current) {
+        setTeam(data.team || []);
+        setTotalActions(data.totalActions || 0);
+        setTotalUniqueOrders(data.totalUniqueOrders || 0);
+        setDateFilterLabel(data.dateFilter || customDate || selectedDate || '');
+      }
     } catch (err) {
-      console.error('Error fetching team stats:', err);
+      if (requestId === activeRequestIdRef.current) {
+        console.error('Error fetching team stats:', err);
+      }
     } finally {
-      setLoading(false);
+      if (requestId === activeRequestIdRef.current) {
+        setLoading(false);
+      }
     }
   }
 

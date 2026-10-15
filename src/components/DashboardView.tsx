@@ -4,6 +4,7 @@ import {
   RotateCw,
   Layers,
   ChevronLeft,
+  Clock,
 } from 'lucide-react';
 import { DashboardStats } from '../types';
 
@@ -23,6 +24,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   selectedDate,
   onFilterStatus,
   onNavigateToPrintedTab,
+  onNavigateToPending,
+  onNavigateToProcessing,
   onNavigateToAlerts,
 }) => {
   if (!stats) {
@@ -191,7 +194,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <div className="flex items-center justify-between text-xs text-rose-300 mb-2">
               <span className="font-bold flex items-center gap-1.5">
                 <AlertTriangle className="w-4 h-4 text-rose-400" />
-                <span>تعدد أكواد التجار (Printed)</span>
+                <span>تعدد المخازن (Printed)</span>
               </span>
               <span className="text-[10px] text-rose-400 uppercase tracking-widest font-mono">حرج</span>
             </div>
@@ -255,6 +258,110 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
             <div className="text-2xl font-bold font-mono text-slate-100">
               {riskIndicators.openAlertsCount}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* 3. Aging Breakdown: Pending & Processing (Critical Business Rule) */}
+      <section className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+            <Clock className="w-3.5 h-3.5 text-amber-400" />
+            <span>توزيع أعمار الحالات الحرجة (حساب دقيق منفصل للمعلق والتنفيذ)</span>
+          </h3>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Pending Aging Card */}
+          <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800 space-y-3">
+            <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
+              <div className="flex items-center gap-2">
+                <Clock className="w-4 h-4 text-amber-400" />
+                <span className="font-bold text-sm text-slate-200">الطلبات المعلقة (Pending)</span>
+              </div>
+              <button
+                onClick={onNavigateToPending}
+                className="text-xs text-amber-400 hover:text-amber-300 flex items-center gap-1 cursor-pointer font-medium"
+              >
+                <span>عرض التفاصيل ({stats.pendingAge?.total ?? currentCounts.Pending})</span>
+                <ChevronLeft className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              العمر يُحسب من <strong className="text-amber-300 font-normal">تاريخ الإنشاء الأصلي</strong> في فيندور (ثابت لا يتأثر بأي تعديل)
+            </p>
+            <div className="grid grid-cols-4 gap-2 pt-1 text-center">
+              <div className="p-2 rounded-lg bg-slate-950/60 border border-slate-800/80">
+                <div className="text-[11px] text-slate-400 mb-1">أقل من يومين</div>
+                <div className="font-mono font-bold text-slate-200 text-base">
+                  {stats.pendingAge?.lessThanTwoDays ?? 0}
+                </div>
+              </div>
+              <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                <div className="text-[11px] text-amber-400 mb-1">2 - 4 أيام</div>
+                <div className="font-mono font-bold text-amber-400 text-base">
+                  {stats.pendingAge?.twoToFourDays ?? 0}
+                </div>
+              </div>
+              <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                <div className="text-[11px] text-amber-400 mb-1">4 - 5 أيام</div>
+                <div className="font-mono font-bold text-amber-400 text-base">
+                  {stats.pendingAge?.fourToFiveDays ?? 0}
+                </div>
+              </div>
+              <div className="p-2 rounded-lg bg-rose-500/10 border border-rose-500/20">
+                <div className="text-[11px] text-rose-400 mb-1">أكثر من 5 أيام</div>
+                <div className="font-mono font-bold text-rose-400 text-base">
+                  {stats.pendingAge?.overFiveDays ?? 0}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Processing Aging Card */}
+          <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800 space-y-3">
+            <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
+              <div className="flex items-center gap-2">
+                <RotateCw className="w-4 h-4 text-sky-400" />
+                <span className="font-bold text-sm text-slate-200">طلبات قيد التنفيذ (Processing)</span>
+              </div>
+              <button
+                onClick={onNavigateToProcessing}
+                className="text-xs text-sky-400 hover:text-sky-300 flex items-center gap-1 cursor-pointer font-medium"
+              >
+                <span>عرض التفاصيل ({stats.processingAge?.total ?? currentCounts.Processing})</span>
+                <ChevronLeft className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              العمر يُحسب من <strong className="text-sky-300 font-normal">آخر حركة فعلية موثقة</strong> بسجلات النظام (أو غير محدد إذا غابت)
+            </p>
+            <div className="grid grid-cols-4 gap-2 pt-1 text-center">
+              <div className="p-2 rounded-lg bg-slate-950/60 border border-slate-800/80">
+                <div className="text-[11px] text-slate-400 mb-1">أقل من يومين</div>
+                <div className="font-mono font-bold text-slate-200 text-base">
+                  {stats.processingAge?.lessThanTwoDays ?? 0}
+                </div>
+              </div>
+              <div className="p-2 rounded-lg bg-sky-500/10 border border-sky-500/20">
+                <div className="text-[11px] text-sky-400 mb-1">2 - 4 أيام</div>
+                <div className="font-mono font-bold text-sky-400 text-base">
+                  {stats.processingAge?.twoToFourDays ?? 0}
+                </div>
+              </div>
+              <div className="p-2 rounded-lg bg-sky-500/10 border border-sky-500/20">
+                <div className="text-[11px] text-sky-400 mb-1">4 - 5 أيام</div>
+                <div className="font-mono font-bold text-sky-400 text-base">
+                  {stats.processingAge?.fourToFiveDays ?? 0}
+                </div>
+              </div>
+              <div className="p-2 rounded-lg bg-rose-500/10 border border-rose-500/20">
+                <div className="text-[11px] text-rose-400 mb-1">أكثر من 5 أيام</div>
+                <div className="font-mono font-bold text-rose-400 text-base">
+                  {stats.processingAge?.overFiveDays ?? 0}
+                </div>
+              </div>
             </div>
           </div>
         </div>

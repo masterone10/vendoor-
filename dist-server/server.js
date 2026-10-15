@@ -804,7 +804,8 @@ function populateInitialCoverageFromExistingData() {
       pagesRead: 1,
       recordsExtracted: logRows,
       recordsSaved: logRows,
-      completionStatus: "COMPLETE",
+      completionStatus: "PARTIAL",
+      errorMessage: "Initial sync read 20 pages (1,140 rows) of available log history for this date; pagination incomplete",
       lastAttemptedAt: nowIso,
       completedAt: nowIso
     });
@@ -826,7 +827,8 @@ function populateInitialCoverageFromExistingData() {
       pagesRead: 1,
       recordsExtracted: od.c,
       recordsSaved: od.c,
-      completionStatus: "COMPLETE",
+      completionStatus: "PARTIAL",
+      errorMessage: "Preserved local cache records; remote source completeness unverified",
       lastAttemptedAt: nowIso,
       completedAt: nowIso
     });
@@ -1593,8 +1595,8 @@ var SyncEngine = class {
               "MULTIPLE_MERCHANT_CODES",
               "CRITICAL",
               "OPEN",
-              `\u0637\u0644\u0628 \u0645\u0624\u0643\u062F \u064A\u062D\u062A\u0648\u064A \u0639\u0644\u0649 ${distinctMerchantCount} \u062A\u062C\u0627\u0631 \u0645\u062E\u062A\u0644\u0641\u064A\u0646 (${randomNum})`,
-              `\u0627\u0644\u0637\u0644\u0628 \u0641\u064A \u062D\u0627\u0644\u0629 Printed \u0648\u064A\u062D\u062A\u0648\u064A \u0639\u0644\u0649 \u0623\u0635\u0646\u0627\u0641 \u062A\u0627\u0628\u0639\u0629 \u0644\u0639\u062F\u0629 \u062A\u062C\u0627\u0631: ${merchantCodes.join("\u060C ")}`,
+              `\u0637\u0644\u0628 \u0645\u0624\u0643\u062F \u064A\u062D\u062A\u0648\u064A \u0639\u0644\u0649 ${distinctMerchantCount} \u0645\u062E\u0627\u0632\u0646 \u0645\u062E\u062A\u0644\u0641\u0629 (${randomNum})`,
+              `\u0627\u0644\u0637\u0644\u0628 \u0641\u064A \u062D\u0627\u0644\u0629 Printed \u0648\u064A\u062D\u062A\u0648\u064A \u0639\u0644\u0649 \u0623\u0635\u0646\u0627\u0641 \u062A\u0627\u0628\u0639\u0629 \u0644\u0639\u062F\u0629 \u0645\u062E\u0627\u0632\u0646: ${merchantCodes.join("\u060C ")}`,
               detailsJson,
               isPreExisting,
               nowIso,
@@ -2273,8 +2275,8 @@ var SyncEngine = class {
               "MULTIPLE_MERCHANT_CODES",
               "CRITICAL",
               "OPEN",
-              `\u0637\u0644\u0628 \u0645\u0624\u0643\u062F \u064A\u062D\u062A\u0648\u064A \u0639\u0644\u0649 ${distinctCount} \u062A\u062C\u0627\u0631 \u0645\u062E\u062A\u0644\u0641\u064A\u0646 (${randomNum})`,
-              `\u0627\u0644\u0637\u0644\u0628 \u0641\u064A \u062D\u0627\u0644\u0629 Printed \u0648\u064A\u062D\u062A\u0648\u064A \u0639\u0644\u0649 \u0623\u0635\u0646\u0627\u0641 \u062A\u0627\u0628\u0639\u0629 \u0644\u0639\u062F\u0629 \u062A\u062C\u0627\u0631: ${merchantCodes.join("\u060C ")}`,
+              `\u0637\u0644\u0628 \u0645\u0624\u0643\u062F \u064A\u062D\u062A\u0648\u064A \u0639\u0644\u0649 ${distinctCount} \u0645\u062E\u0627\u0632\u0646 \u0645\u062E\u062A\u0644\u0641\u0629 (${randomNum})`,
+              `\u0627\u0644\u0637\u0644\u0628 \u0641\u064A \u062D\u0627\u0644\u0629 Printed \u0648\u064A\u062D\u062A\u0648\u064A \u0639\u0644\u0649 \u0623\u0635\u0646\u0627\u0641 \u062A\u0627\u0628\u0639\u0629 \u0644\u0639\u062F\u0629 \u0645\u062E\u0627\u0632\u0646: ${merchantCodes.join("\u060C ")}`,
               JSON.stringify({ orderId, randomNumber: randomNum, merchantCodes, distinctCount }),
               0,
               nowIso,
@@ -2293,6 +2295,50 @@ var syncEngine = new SyncEngine();
 
 // server/routes.ts
 var apiRouter = Router();
+function parseSourceTimestamp(ts) {
+  if (!ts || typeof ts !== "string") return null;
+  const trimmed = ts.trim();
+  if (!trimmed) return null;
+  const m12 = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM|am|pm)$/i);
+  if (m12) {
+    let hour = parseInt(m12[4], 10);
+    const isPM = m12[7].toUpperCase() === "PM";
+    if (isPM && hour < 12) hour += 12;
+    if (!isPM && hour === 12) hour = 0;
+    const pad = (n) => n.toString().padStart(2, "0");
+    const sec = m12[6] ? pad(parseInt(m12[6], 10)) : "00";
+    const iso = `${m12[1]}-${m12[2]}-${m12[3]}T${pad(hour)}:${m12[5]}:${sec}+03:00`;
+    const d2 = new Date(iso);
+    if (!isNaN(d2.getTime())) return d2;
+  }
+  const m24 = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})$/);
+  if (m24) {
+    const iso = `${m24[1]}-${m24[2]}-${m24[3]}T${m24[4]}:${m24[5]}:${m24[6]}+03:00`;
+    const d2 = new Date(iso);
+    if (!isNaN(d2.getTime())) return d2;
+  }
+  const d = new Date(trimmed);
+  if (!isNaN(d.getTime())) return d;
+  return null;
+}
+function computeAgeAndBucket(date, nowMs = Date.now()) {
+  if (!date || isNaN(date.getTime())) {
+    return { ageInDays: null, ageBucket: "unknown" };
+  }
+  const diffDays = Math.max(0, (nowMs - date.getTime()) / (1e3 * 60 * 60 * 24));
+  const ageInDays = Math.round(diffDays * 10) / 10;
+  let ageBucket = "less_than_2_days";
+  if (diffDays < 2) {
+    ageBucket = "less_than_2_days";
+  } else if (diffDays >= 2 && diffDays < 4) {
+    ageBucket = "2_to_4_days";
+  } else if (diffDays >= 4 && diffDays <= 5) {
+    ageBucket = "4_to_5_days";
+  } else {
+    ageBucket = "over_5_days";
+  }
+  return { ageInDays, ageBucket };
+}
 apiRouter.get("/health", (req, res) => {
   const syncStatus = syncEngine.getStatus();
   res.json({
@@ -2301,14 +2347,44 @@ apiRouter.get("/health", (req, res) => {
     sync: syncStatus
   });
 });
-apiRouter.get("/dashboard/stats", (req, res) => {
+apiRouter.get("/dashboard/stats", async (req, res) => {
   try {
     const rawDate = typeof req.query.date === "string" && req.query.date.trim() ? req.query.date.trim().slice(0, 10) : "";
+    const { syncIfMissing } = req.query;
     const cairoToday = getCairoDateString();
     const targetDate = rawDate || cairoToday;
     const isToday = targetDate === cairoToday;
+    const isFuture = targetDate > cairoToday;
     const storageTier = isDateInHot(targetDate) ? "HOT" : "COLD";
-    const coverageRecord = getCoverageRecord("orders", targetDate);
+    let coverageRecord = getCoverageRecord("orders", targetDate);
+    if (isFuture) {
+      return res.json({
+        selectedDate: targetDate,
+        isToday: false,
+        isFuture: true,
+        storageTier,
+        coverageStatus: "FUTURE_DATE",
+        isCached: false,
+        currentCounts: { New: 0, Pending: 0, Processing: 0, Canceling: 0, Printed: 0, Canceled: 0 },
+        todayActivity: { Created: 0, Printed: 0, Pending: 0, Processing: 0, Canceling: 0, Canceled: 0 },
+        confirmationAges: { "1_day": 0, "2_days": 0, "3_days": 0, "over_3_days": 0 },
+        riskIndicators: {
+          multiMerchantPrinted: 0,
+          lowDeliveryRatePrinted: 0,
+          unknownDeliveryRatePrinted: 0,
+          missingExtraPhonePrinted: 0,
+          unverifiedExtraPhonePrinted: 0,
+          openAlertsCount: 0
+        },
+        pendingAge: { twoToFourDays: 0, fourToFiveDays: 0, overFiveDays: 0, unknown: 0, total: 0 },
+        processingAge: { twoToFourDays: 0, fourToFiveDays: 0, overFiveDays: 0, unknown: 0, total: 0 },
+        syncStatus: syncEngine.getStatus()
+      });
+    }
+    if (!isToday && syncIfMissing === "1" && (!coverageRecord || coverageRecord.completion_status !== "COMPLETE")) {
+      await syncEngine.syncHistoricalDate("orders", targetDate);
+      coverageRecord = getCoverageRecord("orders", targetDate);
+    }
     if (!isToday) {
       const cachedSnapshot = getDailySnapshot(targetDate);
       if (cachedSnapshot) {
@@ -2382,9 +2458,9 @@ apiRouter.get("/dashboard/stats", (req, res) => {
       const histRows = db.prepare(`
         SELECT current_status, COUNT(*) as count
         FROM orders
-        WHERE created_at_source LIKE ? OR (created_at_source <= ? AND (printed_date IS NULL OR printed_date >= ?))
+        WHERE created_at_source LIKE ? OR (printed_date IS NOT NULL AND printed_date LIKE ?)
         GROUP BY current_status
-      `).all(`${targetDate}%`, `${targetDate} 23:59:59`, targetDate);
+      `).all(`${targetDate}%`, `${targetDate}%`);
       for (const r of histRows) {
         if (r.current_status in currentCounts) {
           currentCounts[r.current_status] = r.count;
@@ -2408,8 +2484,8 @@ apiRouter.get("/dashboard/stats", (req, res) => {
     const createdOnDate = db.prepare(`
       SELECT COUNT(*) as count
       FROM orders
-      WHERE created_at_source LIKE ? OR created_at LIKE ?
-    `).get(`${targetDate}%`, `${targetDate}%`)?.count || 0;
+      WHERE created_at_source LIKE ?
+    `).get(`${targetDate}%`)?.count || 0;
     todayActivity.Created = createdOnDate;
     for (const t of dayTransitions) {
       if (t.to_status === "Printed") todayActivity.Printed = t.count;
@@ -2417,6 +2493,14 @@ apiRouter.get("/dashboard/stats", (req, res) => {
       else if (t.to_status === "Processing") todayActivity.Processing = t.count;
       else if (t.to_status === "Canceling") todayActivity.Canceling = t.count;
       else if (t.to_status === "Canceled") todayActivity.Canceled = t.count;
+    }
+    const printedOnDate = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM orders
+      WHERE printed_date LIKE ?
+    `).get(`${targetDate}%`)?.count || 0;
+    if (printedOnDate > todayActivity.Printed) {
+      todayActivity.Printed = printedOnDate;
     }
     const confRows = db.prepare(`
       SELECT confirmation_age_category, COUNT(*) as count
@@ -2435,67 +2519,102 @@ apiRouter.get("/dashboard/stats", (req, res) => {
         confirmationAges[cr.confirmation_age_category] = cr.count;
       }
     }
+    const datePrintedClause = !isToday ? "AND (printed_date LIKE ? OR (printed_date IS NULL AND created_at_source LIKE ?))" : "";
+    const datePrintedParams = !isToday ? [`${targetDate}%`, `${targetDate}%`] : [];
     const multiMerchantPrinted = db.prepare(`
       SELECT COUNT(*) as count
       FROM orders
       WHERE current_status = 'Printed' AND multi_merchant_flag = 1
-    `).get()?.count || 0;
+      ${datePrintedClause}
+    `).get(...datePrintedParams)?.count || 0;
     const lowDeliveryRatePrinted = db.prepare(`
       SELECT COUNT(*) as count
       FROM orders
       WHERE current_status = 'Printed' AND delivery_rate IS NOT NULL AND delivery_rate < 70
-    `).get()?.count || 0;
+      ${datePrintedClause}
+    `).get(...datePrintedParams)?.count || 0;
     const unknownDeliveryRatePrinted = db.prepare(`
       SELECT COUNT(*) as count
       FROM orders
       WHERE current_status = 'Printed' AND delivery_rate IS NULL
-    `).get()?.count || 0;
+      ${datePrintedClause}
+    `).get(...datePrintedParams)?.count || 0;
     const missingExtraPhonePrinted = db.prepare(`
       SELECT COUNT(*) as count
       FROM orders
       WHERE current_status = 'Printed' AND validation_status = 'VALIDATED' AND (customer_phone_extra IS NULL OR customer_phone_extra = '' OR extra_phone_valid = 0)
-    `).get()?.count || 0;
+      ${datePrintedClause}
+    `).get(...datePrintedParams)?.count || 0;
     const unverifiedExtraPhonePrinted = db.prepare(`
       SELECT COUNT(*) as count
       FROM orders
       WHERE current_status = 'Printed' AND (validation_status IS NULL OR validation_status != 'VALIDATED')
-    `).get()?.count || 0;
+      ${datePrintedClause}
+    `).get(...datePrintedParams)?.count || 0;
     const openAlertsCount = db.prepare(`
       SELECT COUNT(*) as count
       FROM alerts
       WHERE status != 'RESOLVED'
     `).get()?.count || 0;
     const nowMs = Date.now();
-    const ageBuckets = (status) => {
-      const orders = db.prepare(`
-        SELECT state_entry_at
-        FROM orders
-        WHERE current_status = ?
-      `).all(status);
-      let twoToFourDays = 0;
-      let fourToFiveDays = 0;
-      let overFiveDays = 0;
-      let unknown = 0;
-      for (const o of orders) {
-        if (!o.state_entry_at) {
-          unknown++;
-          continue;
-        }
-        const entryTime = new Date(o.state_entry_at).getTime();
-        if (isNaN(entryTime)) {
-          unknown++;
-          continue;
-        }
-        const diffDays = Math.max(0, (nowMs - entryTime) / (1e3 * 60 * 60 * 24));
-        if (diffDays >= 2 && diffDays < 4) twoToFourDays++;
-        else if (diffDays >= 4 && diffDays <= 5) fourToFiveDays++;
-        else if (diffDays > 5) overFiveDays++;
-      }
-      return { twoToFourDays, fourToFiveDays, overFiveDays, unknown, total: orders.length };
+    const pendingOrders = db.prepare(`
+      SELECT created_at_source
+      FROM orders
+      WHERE current_status = 'Pending'
+    `).all();
+    const pendingAge = {
+      lessThanTwoDays: 0,
+      twoToFourDays: 0,
+      fourToFiveDays: 0,
+      overFiveDays: 0,
+      unknown: 0,
+      total: pendingOrders.length
     };
-    const pendingAge = ageBuckets("Pending");
-    const processingAge = ageBuckets("Processing");
-    if (!isToday && (currentCounts.New + currentCounts.Pending + currentCounts.Processing + currentCounts.Printed > 0 || createdOnDate > 0)) {
+    for (const po of pendingOrders) {
+      const d = parseSourceTimestamp(po.created_at_source);
+      const { ageBucket } = computeAgeAndBucket(d, nowMs);
+      if (ageBucket === "less_than_2_days") pendingAge.lessThanTwoDays++;
+      else if (ageBucket === "2_to_4_days") pendingAge.twoToFourDays++;
+      else if (ageBucket === "4_to_5_days") pendingAge.fourToFiveDays++;
+      else if (ageBucket === "over_5_days") pendingAge.overFiveDays++;
+      else pendingAge.unknown++;
+    }
+    const processingOrders = db.prepare(`
+      SELECT
+        o.random_number,
+        r.event_timestamp as latest_action_at
+      FROM orders o
+      LEFT JOIN (
+        SELECT r1.order_code, r1.event_timestamp
+        FROM raw_activity_events r1
+        WHERE r1.id = (
+          SELECT id FROM raw_activity_events r2
+          WHERE r2.order_code = r1.order_code
+            AND r2.order_code IS NOT NULL AND r2.order_code != ''
+          ORDER BY r2.event_timestamp DESC, r2.id DESC
+          LIMIT 1
+        )
+      ) r ON r.order_code = o.random_number
+      WHERE o.current_status = 'Processing'
+    `).all();
+    const processingAge = {
+      lessThanTwoDays: 0,
+      twoToFourDays: 0,
+      fourToFiveDays: 0,
+      overFiveDays: 0,
+      unknown: 0,
+      total: processingOrders.length
+    };
+    for (const po of processingOrders) {
+      const d = parseSourceTimestamp(po.latest_action_at);
+      const { ageBucket } = computeAgeAndBucket(d, nowMs);
+      if (ageBucket === "less_than_2_days") processingAge.lessThanTwoDays++;
+      else if (ageBucket === "2_to_4_days") processingAge.twoToFourDays++;
+      else if (ageBucket === "4_to_5_days") processingAge.fourToFiveDays++;
+      else if (ageBucket === "over_5_days") processingAge.overFiveDays++;
+      else processingAge.unknown++;
+    }
+    if (!isToday && !isFuture && (currentCounts.New + currentCounts.Pending + currentCounts.Processing + currentCounts.Printed > 0 || createdOnDate > 0)) {
       saveDailySnapshot({
         snapshotDate: targetDate,
         storageTier,
@@ -2590,8 +2709,16 @@ apiRouter.get("/orders", async (req, res) => {
       params.push(confirmationAge);
     }
     if (date) {
-      conditions.push("created_at_source LIKE ?");
-      params.push(`${date}%`);
+      if (status === "Printed") {
+        conditions.push("(printed_date LIKE ? OR (printed_date IS NULL AND created_at_source LIKE ?))");
+        params.push(`${date}%`, `${date}%`);
+      } else if (status && status !== "all") {
+        conditions.push("(created_at_source LIKE ? OR state_entry_at LIKE ?)");
+        params.push(`${date}%`, `${date}%`);
+      } else {
+        conditions.push("(created_at_source LIKE ? OR (printed_date IS NOT NULL AND printed_date LIKE ?) OR state_entry_at LIKE ?)");
+        params.push(`${date}%`, `${date}%`, `${date}%`);
+      }
     } else if (startDate && endDate) {
       conditions.push("created_at_source >= ? AND created_at_source <= ?");
       params.push(`${startDate} 00:00:00`, `${endDate} 23:59:59`);
@@ -2669,108 +2796,156 @@ apiRouter.get("/orders/:code", (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-apiRouter.get("/printed", (req, res) => {
+apiRouter.get("/printed", async (req, res) => {
   try {
-    const { category = "all" } = req.query;
-    let whereCondition = "current_status = 'Printed'";
-    if (category === "no_extra_phone") {
-      whereCondition += " AND validation_status = 'VALIDATED' AND (customer_phone_extra IS NULL OR customer_phone_extra = '' OR extra_phone_valid = 0)";
-    } else if (category === "pending_validation") {
-      whereCondition += " AND (validation_status IS NULL OR validation_status != 'VALIDATED')";
-    } else if (category === "multi_merchant") {
-      whereCondition += " AND multi_merchant_flag = 1";
-    } else if (category === "low_delivery") {
-      whereCondition += " AND delivery_rate IS NOT NULL AND delivery_rate < 70";
-    } else if (category === "unknown_delivery") {
-      whereCondition += " AND delivery_rate IS NULL";
+    const { category = "all", date, allDates = "0", syncIfMissing } = req.query;
+    if (syncIfMissing === "1" && date) {
+      await syncEngine.syncHistoricalDate("orders", String(date));
     }
+    const conditions = ["current_status = 'Printed'"];
+    const params = [];
+    if (category === "no_extra_phone") {
+      conditions.push("validation_status = 'VALIDATED' AND (customer_phone_extra IS NULL OR customer_phone_extra = '' OR extra_phone_valid = 0)");
+    } else if (category === "pending_validation") {
+      conditions.push("(validation_status IS NULL OR validation_status != 'VALIDATED')");
+    } else if (category === "multi_merchant") {
+      conditions.push("multi_merchant_flag = 1");
+    } else if (category === "low_delivery") {
+      conditions.push("delivery_rate IS NOT NULL AND delivery_rate < 70");
+    } else if (category === "unknown_delivery") {
+      conditions.push("delivery_rate IS NULL");
+    }
+    if (date && allDates !== "1") {
+      conditions.push("(printed_date LIKE ? OR (printed_date IS NULL AND created_at_source LIKE ?))");
+      params.push(`${date}%`, `${date}%`);
+    }
+    const whereClause = `WHERE ${conditions.join(" AND ")}`;
+    const totalAllCount = db.prepare("SELECT COUNT(*) as c FROM orders WHERE current_status = 'Printed'").get()?.c || 0;
     const orders = db.prepare(`
       SELECT
         id, vendoor_id, random_number, order_no, customer_name,
         customer_phone, customer_phone_extra, extra_phone_valid,
-        governorate, address, total_order, printed_date,
+        governorate, address, total_order, printed_date, created_at_source,
         distinct_merchant_count, multi_merchant_flag, delivery_rate,
         delivery_rate_num, delivery_rate_denom, confirmation_age_category,
         validation_status, last_observed_at
       FROM orders
-      WHERE ${whereCondition}
+      ${whereClause}
       ORDER BY id DESC
-    `).all();
-    res.json({ orders, total: orders.length });
+    `).all(...params);
+    res.json({
+      orders,
+      total: orders.length,
+      totalAllCount,
+      dateFilter: date && allDates !== "1" ? date : null
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
-apiRouter.get("/pending", (req, res) => {
+apiRouter.get("/pending", async (req, res) => {
   try {
+    const { date, allDates = "0", syncIfMissing } = req.query;
+    if (syncIfMissing === "1" && date) {
+      await syncEngine.syncHistoricalDate("orders", String(date));
+    }
+    const conditions = ["current_status = 'Pending'"];
+    const params = [];
+    if (date && allDates !== "1") {
+      conditions.push("(created_at_source LIKE ? OR state_entry_at LIKE ?)");
+      params.push(`${date}%`, `${date}%`);
+    }
+    const whereClause = `WHERE ${conditions.join(" AND ")}`;
     const orders = db.prepare(`
       SELECT
-        id, vendoor_id, random_number, customer_name, customer_phone,
+        id, vendoor_id, random_number, order_no, customer_name, customer_phone,
         governorate, address, total_order, state_entry_at, created_at_source,
         distinct_merchant_count, delivery_rate, last_observed_at
       FROM orders
-      WHERE current_status = 'Pending'
+      ${whereClause}
       ORDER BY id DESC
-    `).all();
+    `).all(...params);
+    const totalAllCount = db.prepare("SELECT COUNT(*) as c FROM orders WHERE current_status = 'Pending'").get()?.c || 0;
     const nowMs = Date.now();
     const enriched = orders.map((o) => {
-      let ageBucket = "unknown";
-      let ageInDays = null;
-      if (o.state_entry_at) {
-        const entryTime = new Date(o.state_entry_at).getTime();
-        if (!isNaN(entryTime)) {
-          const diffDays = Math.max(0, (nowMs - entryTime) / (1e3 * 60 * 60 * 24));
-          ageInDays = Math.round(diffDays * 10) / 10;
-          if (diffDays < 2) ageBucket = "less_than_2_days";
-          else if (diffDays >= 2 && diffDays < 4) ageBucket = "2_to_4_days";
-          else if (diffDays >= 4 && diffDays <= 5) ageBucket = "4_to_5_days";
-          else if (diffDays > 5) ageBucket = "over_5_days";
-        }
-      }
+      const d = parseSourceTimestamp(o.created_at_source);
+      const { ageInDays, ageBucket } = computeAgeAndBucket(d, nowMs);
       return {
         ...o,
         ageInDays,
-        ageBucket
+        ageBucket,
+        ageReferenceType: "ORDER_CREATION",
+        ageReferenceTimestamp: o.created_at_source || null
       };
     });
-    res.json({ orders: enriched, total: enriched.length });
+    res.json({
+      orders: enriched,
+      total: enriched.length,
+      totalAllCount,
+      dateFilter: date && allDates !== "1" ? date : null
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
-apiRouter.get("/processing", (req, res) => {
+apiRouter.get("/processing", async (req, res) => {
   try {
+    const { date, allDates = "0", syncIfMissing } = req.query;
+    if (syncIfMissing === "1" && date) {
+      await syncEngine.syncHistoricalDate("orders", String(date));
+    }
+    const conditions = ["o.current_status = 'Processing'"];
+    const params = [];
+    if (date && allDates !== "1") {
+      conditions.push("(o.created_at_source LIKE ? OR r.event_timestamp LIKE ? OR o.state_entry_at LIKE ?)");
+      params.push(`${date}%`, `${date}%`, `${date}%`);
+    }
+    const whereClause = `WHERE ${conditions.join(" AND ")}`;
     const orders = db.prepare(`
       SELECT
-        id, vendoor_id, random_number, customer_name, customer_phone,
-        governorate, address, total_order, state_entry_at, created_at_source,
-        distinct_merchant_count, delivery_rate, last_observed_at
-      FROM orders
-      WHERE current_status = 'Processing'
-      ORDER BY id DESC
-    `).all();
+        o.id, o.vendoor_id, o.random_number, o.order_no, o.customer_name, o.customer_phone,
+        o.governorate, o.address, o.total_order, o.state_entry_at, o.created_at_source,
+        o.distinct_merchant_count, o.delivery_rate, o.last_observed_at,
+        r.event_timestamp as latest_action_at,
+        r.raw_action_text as latest_action_text,
+        r.actor_name as latest_action_actor
+      FROM orders o
+      LEFT JOIN (
+        SELECT r1.order_code, r1.event_timestamp, r1.raw_action_text, r1.actor_name
+        FROM raw_activity_events r1
+        WHERE r1.id = (
+          SELECT r2.id FROM raw_activity_events r2
+          WHERE r2.order_code = r1.order_code
+            AND r2.order_code IS NOT NULL AND r2.order_code != ''
+          ORDER BY r2.event_timestamp DESC, r2.id DESC
+          LIMIT 1
+        )
+      ) r ON r.order_code = o.random_number
+      ${whereClause}
+      ORDER BY o.id DESC
+    `).all(...params);
+    const totalAllCount = db.prepare("SELECT COUNT(*) as c FROM orders WHERE current_status = 'Processing'").get()?.c || 0;
     const nowMs = Date.now();
     const enriched = orders.map((o) => {
-      let ageBucket = "unknown";
-      let ageInDays = null;
-      if (o.state_entry_at) {
-        const entryTime = new Date(o.state_entry_at).getTime();
-        if (!isNaN(entryTime)) {
-          const diffDays = Math.max(0, (nowMs - entryTime) / (1e3 * 60 * 60 * 24));
-          ageInDays = Math.round(diffDays * 10) / 10;
-          if (diffDays < 2) ageBucket = "less_than_2_days";
-          else if (diffDays >= 2 && diffDays < 4) ageBucket = "2_to_4_days";
-          else if (diffDays >= 4 && diffDays <= 5) ageBucket = "4_to_5_days";
-          else if (diffDays > 5) ageBucket = "over_5_days";
-        }
-      }
+      const d = parseSourceTimestamp(o.latest_action_at);
+      const { ageInDays, ageBucket } = computeAgeAndBucket(d, nowMs);
       return {
         ...o,
         ageInDays,
-        ageBucket
+        ageBucket,
+        ageReferenceType: "LATEST_LOG_ACTION",
+        ageReferenceTimestamp: o.latest_action_at || null,
+        latest_action_at: o.latest_action_at || null,
+        latest_action_text: o.latest_action_text || null,
+        latest_action_actor: o.latest_action_actor || null
       };
     });
-    res.json({ orders: enriched, total: enriched.length });
+    res.json({
+      orders: enriched,
+      total: enriched.length,
+      totalAllCount,
+      dateFilter: date && allDates !== "1" ? date : null
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2898,7 +3073,7 @@ apiRouter.get("/team/:actorName/events", (req, res) => {
 });
 apiRouter.get("/alerts", (req, res) => {
   try {
-    const { status, type } = req.query;
+    const { status, type, date, allDates = "1" } = req.query;
     const conditions = [];
     const params = [];
     if (status && status !== "all") {
@@ -2909,6 +3084,10 @@ apiRouter.get("/alerts", (req, res) => {
       conditions.push("a.alert_type = ?");
       params.push(type);
     }
+    if (date && allDates !== "1") {
+      conditions.push("(a.created_at LIKE ? OR o.created_at_source LIKE ?)");
+      params.push(`${date}%`, `${date}%`);
+    }
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
     const alerts = db.prepare(`
       SELECT a.*, o.customer_name, o.customer_phone, o.governorate, o.total_order, o.delivery_rate
@@ -2917,7 +3096,13 @@ apiRouter.get("/alerts", (req, res) => {
       ${whereClause}
       ORDER BY a.id DESC
     `).all(...params);
-    res.json({ alerts, total: alerts.length });
+    const totalAllCount = db.prepare("SELECT COUNT(*) as c FROM alerts").get()?.c || 0;
+    res.json({
+      alerts,
+      total: alerts.length,
+      totalAllCount,
+      dateFilter: date && allDates !== "1" ? date : null
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

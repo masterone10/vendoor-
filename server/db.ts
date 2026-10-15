@@ -576,7 +576,8 @@ export function populateInitialCoverageFromExistingData() {
       pagesRead: 1,
       recordsExtracted: logRows,
       recordsSaved: logRows,
-      completionStatus: 'COMPLETE',
+      completionStatus: 'PARTIAL',
+      errorMessage: 'Initial sync read 20 pages (1,140 rows) of available log history for this date; pagination incomplete',
       lastAttemptedAt: nowIso,
       completedAt: nowIso,
     });
@@ -601,7 +602,8 @@ export function populateInitialCoverageFromExistingData() {
       pagesRead: 1,
       recordsExtracted: od.c,
       recordsSaved: od.c,
-      completionStatus: 'COMPLETE',
+      completionStatus: 'PARTIAL',
+      errorMessage: 'Preserved local cache records; remote source completeness unverified',
       lastAttemptedAt: nowIso,
       completedAt: nowIso,
     });
