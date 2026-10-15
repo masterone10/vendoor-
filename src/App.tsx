@@ -29,7 +29,7 @@ export default function App() {
   const [currentTab, setCurrentTab] = useState<NavTab>('dashboard');
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [selectedOrderCode, setSelectedOrderCode] = useState<string | null>(null);
-  const [printedSubTab, setPrintedSubTab] = useState<'all' | 'no_extra_phone' | 'multi_merchant' | 'low_delivery'>('all');
+  const [printedSubTab, setPrintedSubTab] = useState<'all' | 'no_extra_phone' | 'multi_merchant' | 'low_delivery' | 'pending_validation' | 'unknown_delivery'>('all');
   const [ordersStatusFilter, setOrdersStatusFilter] = useState<string>('all');
   const [isSyncingManual, setIsSyncingManual] = useState(false);
 
@@ -98,7 +98,7 @@ export default function App() {
     setCurrentTab('printed');
   }
 
-  function handleNavigateToPrintedTab(subTab: 'all' | 'no_extra_phone' | 'multi_merchant' | 'low_delivery') {
+  function handleNavigateToPrintedTab(subTab: 'all' | 'no_extra_phone' | 'multi_merchant' | 'low_delivery' | 'pending_validation' | 'unknown_delivery') {
     setPrintedSubTab(subTab);
     setCurrentTab('printed');
   }

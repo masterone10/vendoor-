@@ -15,14 +15,21 @@ apiRouter.get('/health', (req: Request, res: Response) => {
 });
 
 // 2. Dashboard KPIs & Aggregations with Global Business Date
-apiRouter.get('/dashboard/stats', (req: Request, res: Response) => {
+apiRouter.get('/dashboard/stats', async (req: Request, res: Response) => {
   try {
     const rawDate = typeof req.query.date === 'string' && req.query.date.trim() ? req.query.date.trim().slice(0, 10) : '';
+    const { syncIfMissing } = req.query;
     const cairoToday = getCairoDateString();
     const targetDate = rawDate || cairoToday;
     const isToday = targetDate === cairoToday;
     const storageTier = isDateInHot(targetDate) ? 'HOT' : 'COLD';
-    const coverageRecord = getCoverageRecord('orders', targetDate);
+    let coverageRecord = getCoverageRecord('orders', targetDate);
+
+    // If historical date and syncIfMissing is requested and coverage is not COMPLETE, sync first
+    if (!isToday && syncIfMissing === '1' && (!coverageRecord || coverageRecord.completion_status !== 'COMPLETE')) {
+      await syncEngine.syncHistoricalDate('orders', targetDate);
+      coverageRecord = getCoverageRecord('orders', targetDate);
+    }
 
     // If historical date and already saved as daily snapshot, return cached snapshot
     if (!isToday) {
@@ -101,13 +108,13 @@ apiRouter.get('/dashboard/stats', (req: Request, res: Response) => {
         }
       }
     } else {
-      // Historical end-of-day orders for targetDate
+      // Historical orders for targetDate
       const histRows: any[] = db.prepare(`
         SELECT current_status, COUNT(*) as count
         FROM orders
-        WHERE created_at_source LIKE ? OR (created_at_source <= ? AND (printed_date IS NULL OR printed_date >= ?))
+        WHERE created_at_source LIKE ? OR (printed_date IS NOT NULL AND printed_date LIKE ?)
         GROUP BY current_status
-      `).all(`${targetDate}%`, `${targetDate} 23:59:59`, targetDate);
+      `).all(`${targetDate}%`, `${targetDate}%`);
 
       for (const r of histRows) {
         if (r.current_status in currentCounts) {
@@ -169,23 +176,47 @@ apiRouter.get('/dashboard/stats', (req: Request, res: Response) => {
     }
 
     // 4. Risk Indicators for Printed orders
+    const datePrintedClause = !isToday
+      ? 'AND (printed_date LIKE ? OR (printed_date IS NULL AND created_at_source LIKE ?))'
+      : '';
+    const datePrintedParams = !isToday ? [`${targetDate}%`, `${targetDate}%`] : [];
+
     const multiMerchantPrinted = (db.prepare(`
       SELECT COUNT(*) as count
       FROM orders
       WHERE current_status = 'Printed' AND multi_merchant_flag = 1
-    `).get() as any)?.count || 0;
+      ${datePrintedClause}
+    `).get(...datePrintedParams) as any)?.count || 0;
 
     const lowDeliveryRatePrinted = (db.prepare(`
       SELECT COUNT(*) as count
       FROM orders
       WHERE current_status = 'Printed' AND delivery_rate IS NOT NULL AND delivery_rate < 70
-    `).get() as any)?.count || 0;
+      ${datePrintedClause}
+    `).get(...datePrintedParams) as any)?.count || 0;
 
+    const unknownDeliveryRatePrinted = (db.prepare(`
+      SELECT COUNT(*) as count
+      FROM orders
+      WHERE current_status = 'Printed' AND delivery_rate IS NULL
+      ${datePrintedClause}
+    `).get(...datePrintedParams) as any)?.count || 0;
+
+    // Verified missing extra phone only when inspection was completed (VALIDATED)
     const missingExtraPhonePrinted = (db.prepare(`
       SELECT COUNT(*) as count
       FROM orders
-      WHERE current_status = 'Printed' AND (customer_phone_extra IS NULL OR customer_phone_extra = '' OR extra_phone_valid = 0)
-    `).get() as any)?.count || 0;
+      WHERE current_status = 'Printed' AND validation_status = 'VALIDATED' AND (customer_phone_extra IS NULL OR customer_phone_extra = '' OR extra_phone_valid = 0)
+      ${datePrintedClause}
+    `).get(...datePrintedParams) as any)?.count || 0;
+
+    // Pending inspection / unverified phone enrichment
+    const unverifiedExtraPhonePrinted = (db.prepare(`
+      SELECT COUNT(*) as count
+      FROM orders
+      WHERE current_status = 'Printed' AND (validation_status IS NULL OR validation_status != 'VALIDATED')
+      ${datePrintedClause}
+    `).get(...datePrintedParams) as any)?.count || 0;
 
     const openAlertsCount = (db.prepare(`
       SELECT COUNT(*) as count
@@ -193,11 +224,11 @@ apiRouter.get('/dashboard/stats', (req: Request, res: Response) => {
       WHERE status != 'RESOLVED'
     `).get() as any)?.count || 0;
 
-    // 5. Age in status buckets for Pending & Processing
+    // 5. Age in status buckets for Pending & Processing (without fabricating timestamps)
     const nowMs = Date.now();
     const ageBuckets = (status: string) => {
       const orders: any[] = db.prepare(`
-        SELECT state_entry_at, created_at_source
+        SELECT state_entry_at
         FROM orders
         WHERE current_status = ?
       `).all(status);
@@ -205,16 +236,25 @@ apiRouter.get('/dashboard/stats', (req: Request, res: Response) => {
       let twoToFourDays = 0;
       let fourToFiveDays = 0;
       let overFiveDays = 0;
+      let unknown = 0;
 
       for (const o of orders) {
-        const entryTime = o.state_entry_at ? new Date(o.state_entry_at).getTime() : new Date(o.created_at_source).getTime();
+        if (!o.state_entry_at) {
+          unknown++;
+          continue;
+        }
+        const entryTime = new Date(o.state_entry_at).getTime();
+        if (isNaN(entryTime)) {
+          unknown++;
+          continue;
+        }
         const diffDays = Math.max(0, (nowMs - entryTime) / (1000 * 60 * 60 * 24));
         if (diffDays >= 2 && diffDays < 4) twoToFourDays++;
         else if (diffDays >= 4 && diffDays <= 5) fourToFiveDays++;
         else if (diffDays > 5) overFiveDays++;
       }
 
-      return { twoToFourDays, fourToFiveDays, overFiveDays, total: orders.length };
+      return { twoToFourDays, fourToFiveDays, overFiveDays, unknown, total: orders.length };
     };
 
     const pendingAge = ageBuckets('Pending');
@@ -263,7 +303,9 @@ apiRouter.get('/dashboard/stats', (req: Request, res: Response) => {
       riskIndicators: {
         multiMerchantPrinted,
         lowDeliveryRatePrinted,
+        unknownDeliveryRatePrinted,
         missingExtraPhonePrinted,
+        unverifiedExtraPhonePrinted,
         openAlertsCount,
       },
       todayActivity,
@@ -325,8 +367,16 @@ apiRouter.get('/orders', async (req: Request, res: Response) => {
     }
 
     if (date) {
-      conditions.push('created_at_source LIKE ?');
-      params.push(`${date}%`);
+      if (status === 'Printed') {
+        conditions.push('(printed_date LIKE ? OR (printed_date IS NULL AND created_at_source LIKE ?))');
+        params.push(`${date}%`, `${date}%`);
+      } else if (status && status !== 'all') {
+        conditions.push('(created_at_source LIKE ? OR state_entry_at LIKE ?)');
+        params.push(`${date}%`, `${date}%`);
+      } else {
+        conditions.push('(created_at_source LIKE ? OR (printed_date IS NOT NULL AND printed_date LIKE ?) OR state_entry_at LIKE ?)');
+        params.push(`${date}%`, `${date}%`, `${date}%`);
+      }
     } else if (startDate && endDate) {
       conditions.push('created_at_source >= ? AND created_at_source <= ?');
       params.push(`${startDate} 00:00:00`, `${endDate} 23:59:59`);
@@ -423,104 +473,192 @@ apiRouter.get('/orders/:code', (req: Request, res: Response) => {
   }
 });
 
-// 5. Printed View
-apiRouter.get('/printed', (req: Request, res: Response) => {
+// 5. Printed View with Global Date Support
+apiRouter.get('/printed', async (req: Request, res: Response) => {
   try {
-    const { category = 'all' } = req.query;
+    const { category = 'all', date, allDates = '0', syncIfMissing } = req.query;
 
-    let whereCondition = "current_status = 'Printed'";
-    if (category === 'no_extra_phone') {
-      whereCondition += ' AND (customer_phone_extra IS NULL OR extra_phone_valid = 0)';
-    } else if (category === 'multi_merchant') {
-      whereCondition += ' AND multi_merchant_flag = 1';
-    } else if (category === 'low_delivery') {
-      whereCondition += ' AND delivery_rate IS NOT NULL AND delivery_rate < 70';
+    if (syncIfMissing === '1' && date) {
+      await syncEngine.syncHistoricalDate('orders', String(date));
     }
+
+    const conditions: string[] = ["current_status = 'Printed'"];
+    const params: any[] = [];
+
+    if (category === 'no_extra_phone') {
+      conditions.push("validation_status = 'VALIDATED' AND (customer_phone_extra IS NULL OR customer_phone_extra = '' OR extra_phone_valid = 0)");
+    } else if (category === 'pending_validation') {
+      conditions.push("(validation_status IS NULL OR validation_status != 'VALIDATED')");
+    } else if (category === 'multi_merchant') {
+      conditions.push('multi_merchant_flag = 1');
+    } else if (category === 'low_delivery') {
+      conditions.push('delivery_rate IS NOT NULL AND delivery_rate < 70');
+    } else if (category === 'unknown_delivery') {
+      conditions.push('delivery_rate IS NULL');
+    }
+
+    // Filter by date if requested and not showing all dates
+    if (date && allDates !== '1') {
+      conditions.push('(printed_date LIKE ? OR (printed_date IS NULL AND created_at_source LIKE ?))');
+      params.push(`${date}%`, `${date}%`);
+    }
+
+    const whereClause = `WHERE ${conditions.join(' AND ')}`;
+
+    // Total across all dates for this status
+    const totalAllCount = (db.prepare("SELECT COUNT(*) as c FROM orders WHERE current_status = 'Printed'").get() as any)?.c || 0;
 
     const orders: any[] = db.prepare(`
       SELECT
         id, vendoor_id, random_number, order_no, customer_name,
         customer_phone, customer_phone_extra, extra_phone_valid,
-        governorate, address, total_order, printed_date,
+        governorate, address, total_order, printed_date, created_at_source,
         distinct_merchant_count, multi_merchant_flag, delivery_rate,
         delivery_rate_num, delivery_rate_denom, confirmation_age_category,
-        last_observed_at
+        validation_status, last_observed_at
       FROM orders
-      WHERE ${whereCondition}
+      ${whereClause}
       ORDER BY id DESC
-    `).all();
+    `).all(...params);
 
-    res.json({ orders, total: orders.length });
+    res.json({
+      orders,
+      total: orders.length,
+      totalAllCount,
+      dateFilter: date && allDates !== '1' ? date : null,
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// 6. Pending Orders Categorized by Age
-apiRouter.get('/pending', (req: Request, res: Response) => {
+// 6. Pending Orders Categorized by Age with Global Date Support
+apiRouter.get('/pending', async (req: Request, res: Response) => {
   try {
+    const { date, allDates = '0', syncIfMissing } = req.query;
+
+    if (syncIfMissing === '1' && date) {
+      await syncEngine.syncHistoricalDate('orders', String(date));
+    }
+
+    const conditions: string[] = ["current_status = 'Pending'"];
+    const params: any[] = [];
+
+    if (date && allDates !== '1') {
+      conditions.push('(created_at_source LIKE ? OR state_entry_at LIKE ?)');
+      params.push(`${date}%`, `${date}%`);
+    }
+
+    const whereClause = `WHERE ${conditions.join(' AND ')}`;
+
     const orders: any[] = db.prepare(`
       SELECT
         id, vendoor_id, random_number, customer_name, customer_phone,
         governorate, address, total_order, state_entry_at, created_at_source,
         distinct_merchant_count, delivery_rate, last_observed_at
       FROM orders
-      WHERE current_status = 'Pending'
+      ${whereClause}
       ORDER BY id DESC
-    `).all();
+    `).all(...params);
+
+    const totalAllCount = (db.prepare("SELECT COUNT(*) as c FROM orders WHERE current_status = 'Pending'").get() as any)?.c || 0;
 
     const nowMs = Date.now();
     const enriched = orders.map(o => {
-      const entryTime = o.state_entry_at ? new Date(o.state_entry_at).getTime() : new Date(o.created_at_source).getTime();
-      const diffDays = Math.max(0, (nowMs - entryTime) / (1000 * 60 * 60 * 24));
-      let ageBucket = 'less_than_2_days';
-      if (diffDays >= 2 && diffDays < 4) ageBucket = '2_to_4_days';
-      else if (diffDays >= 4 && diffDays <= 5) ageBucket = '4_to_5_days';
-      else if (diffDays > 5) ageBucket = 'over_5_days';
+      let ageBucket = 'unknown';
+      let ageInDays: number | null = null;
+
+      if (o.state_entry_at) {
+        const entryTime = new Date(o.state_entry_at).getTime();
+        if (!isNaN(entryTime)) {
+          const diffDays = Math.max(0, (nowMs - entryTime) / (1000 * 60 * 60 * 24));
+          ageInDays = Math.round(diffDays * 10) / 10;
+          if (diffDays < 2) ageBucket = 'less_than_2_days';
+          else if (diffDays >= 2 && diffDays < 4) ageBucket = '2_to_4_days';
+          else if (diffDays >= 4 && diffDays <= 5) ageBucket = '4_to_5_days';
+          else if (diffDays > 5) ageBucket = 'over_5_days';
+        }
+      }
 
       return {
         ...o,
-        ageInDays: Math.round(diffDays * 10) / 10,
+        ageInDays,
         ageBucket,
       };
     });
 
-    res.json({ orders: enriched, total: enriched.length });
+    res.json({
+      orders: enriched,
+      total: enriched.length,
+      totalAllCount,
+      dateFilter: date && allDates !== '1' ? date : null,
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// 7. Processing Orders Categorized by Age
-apiRouter.get('/processing', (req: Request, res: Response) => {
+// 7. Processing Orders Categorized by Age with Global Date Support
+apiRouter.get('/processing', async (req: Request, res: Response) => {
   try {
+    const { date, allDates = '0', syncIfMissing } = req.query;
+
+    if (syncIfMissing === '1' && date) {
+      await syncEngine.syncHistoricalDate('orders', String(date));
+    }
+
+    const conditions: string[] = ["current_status = 'Processing'"];
+    const params: any[] = [];
+
+    if (date && allDates !== '1') {
+      conditions.push('(created_at_source LIKE ? OR state_entry_at LIKE ?)');
+      params.push(`${date}%`, `${date}%`);
+    }
+
+    const whereClause = `WHERE ${conditions.join(' AND ')}`;
+
     const orders: any[] = db.prepare(`
       SELECT
         id, vendoor_id, random_number, customer_name, customer_phone,
         governorate, address, total_order, state_entry_at, created_at_source,
         distinct_merchant_count, delivery_rate, last_observed_at
       FROM orders
-      WHERE current_status = 'Processing'
+      ${whereClause}
       ORDER BY id DESC
-    `).all();
+    `).all(...params);
+
+    const totalAllCount = (db.prepare("SELECT COUNT(*) as c FROM orders WHERE current_status = 'Processing'").get() as any)?.c || 0;
 
     const nowMs = Date.now();
     const enriched = orders.map(o => {
-      const entryTime = o.state_entry_at ? new Date(o.state_entry_at).getTime() : new Date(o.created_at_source).getTime();
-      const diffDays = Math.max(0, (nowMs - entryTime) / (1000 * 60 * 60 * 24));
-      let ageBucket = 'less_than_2_days';
-      if (diffDays >= 2 && diffDays < 4) ageBucket = '2_to_4_days';
-      else if (diffDays >= 4 && diffDays <= 5) ageBucket = '4_to_5_days';
-      else if (diffDays > 5) ageBucket = 'over_5_days';
+      let ageBucket = 'unknown';
+      let ageInDays: number | null = null;
+
+      if (o.state_entry_at) {
+        const entryTime = new Date(o.state_entry_at).getTime();
+        if (!isNaN(entryTime)) {
+          const diffDays = Math.max(0, (nowMs - entryTime) / (1000 * 60 * 60 * 24));
+          ageInDays = Math.round(diffDays * 10) / 10;
+          if (diffDays < 2) ageBucket = 'less_than_2_days';
+          else if (diffDays >= 2 && diffDays < 4) ageBucket = '2_to_4_days';
+          else if (diffDays >= 4 && diffDays <= 5) ageBucket = '4_to_5_days';
+          else if (diffDays > 5) ageBucket = 'over_5_days';
+        }
+      }
 
       return {
         ...o,
-        ageInDays: Math.round(diffDays * 10) / 10,
+        ageInDays,
         ageBucket,
       };
     });
 
-    res.json({ orders: enriched, total: enriched.length });
+    res.json({
+      orders: enriched,
+      total: enriched.length,
+      totalAllCount,
+      dateFilter: date && allDates !== '1' ? date : null,
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -676,10 +814,10 @@ apiRouter.get('/team/:actorName/events', (req: Request, res: Response) => {
   }
 });
 
-// 10. Alerts Management
+// 10. Alerts Management with Global Date Support
 apiRouter.get('/alerts', (req: Request, res: Response) => {
   try {
-    const { status, type } = req.query;
+    const { status, type, date, allDates = '1' } = req.query;
     const conditions: string[] = [];
     const params: any[] = [];
 
@@ -690,6 +828,10 @@ apiRouter.get('/alerts', (req: Request, res: Response) => {
     if (type) {
       conditions.push('a.alert_type = ?');
       params.push(type);
+    }
+    if (date && allDates !== '1') {
+      conditions.push('(a.created_at LIKE ? OR o.created_at_source LIKE ?)');
+      params.push(`${date}%`, `${date}%`);
     }
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -702,7 +844,14 @@ apiRouter.get('/alerts', (req: Request, res: Response) => {
       ORDER BY a.id DESC
     `).all(...params);
 
-    res.json({ alerts, total: alerts.length });
+    const totalAllCount = (db.prepare('SELECT COUNT(*) as c FROM alerts').get() as any)?.c || 0;
+
+    res.json({
+      alerts,
+      total: alerts.length,
+      totalAllCount,
+      dateFilter: date && allDates !== '1' ? date : null,
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

@@ -1,18 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import { AlertTriangle, PhoneCall, ShoppingBag, CheckCircle, Search, Eye } from 'lucide-react';
+import { AlertTriangle, PhoneCall, ShoppingBag, CheckCircle, Search, Eye, Calendar, Layers } from 'lucide-react';
 import { Order } from '../types';
 
 interface PrintedViewProps {
-  initialSubTab?: 'all' | 'no_extra_phone' | 'multi_merchant' | 'low_delivery';
+  initialSubTab?: 'all' | 'no_extra_phone' | 'multi_merchant' | 'low_delivery' | 'pending_validation' | 'unknown_delivery';
+  selectedDate?: string;
   onSelectOrder: (orderCode: string) => void;
 }
 
 export const PrintedView: React.FC<PrintedViewProps> = ({
   initialSubTab = 'all',
+  selectedDate,
   onSelectOrder,
 }) => {
-  const [subTab, setSubTab] = useState<'all' | 'no_extra_phone' | 'multi_merchant' | 'low_delivery'>(initialSubTab);
+  const [subTab, setSubTab] = useState<'all' | 'no_extra_phone' | 'multi_merchant' | 'low_delivery' | 'pending_validation' | 'unknown_delivery'>(initialSubTab);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [totalAllCount, setTotalAllCount] = useState<number>(0);
+  const [showAllDates, setShowAllDates] = useState<boolean>(false);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
 
@@ -22,14 +26,26 @@ export const PrintedView: React.FC<PrintedViewProps> = ({
 
   useEffect(() => {
     fetchPrintedOrders();
-  }, [subTab]);
+  }, [subTab, selectedDate, showAllDates]);
 
   async function fetchPrintedOrders() {
     setLoading(true);
     try {
-      const res = await fetch(`/api/printed?category=${subTab}`);
+      const params = new URLSearchParams();
+      params.set('category', subTab);
+      if (selectedDate && !showAllDates) {
+        params.set('date', selectedDate);
+      }
+      if (showAllDates) {
+        params.set('allDates', '1');
+      }
+
+      const res = await fetch(`/api/printed?${params.toString()}`);
       const data = await res.json();
       setOrders(data.orders || []);
+      if (data.totalAllCount !== undefined) {
+        setTotalAllCount(data.totalAllCount);
+      }
     } catch (err) {
       console.error('Error fetching printed orders:', err);
     } finally {
@@ -63,8 +79,30 @@ export const PrintedView: React.FC<PrintedViewProps> = ({
           </p>
         </div>
 
+        {/* Date Scope Filter Toggle */}
+        {selectedDate && (
+          <div className="flex items-center gap-2 bg-slate-900/80 border border-slate-800 rounded-lg px-3 py-1.5 text-xs">
+            <Calendar className="w-3.5 h-3.5 text-amber-400" />
+            <span className="text-slate-400">التاريخ:</span>
+            {!showAllDates ? (
+              <span className="font-mono text-amber-300 font-semibold bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded">
+                {selectedDate}
+              </span>
+            ) : (
+              <span className="text-slate-300">كافة التواريخ</span>
+            )}
+            <button
+              onClick={() => setShowAllDates(!showAllDates)}
+              className="mr-2 text-[11px] px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer"
+            >
+              {showAllDates ? `حصر باليوم المحدد` : `عرض الكل (${totalAllCount})`}
+            </button>
+          </div>
+        )}
+      </div>
+
         {/* Category Tabs */}
-        <div className="flex items-center gap-1.5 p-1 bg-slate-900 border border-slate-800 rounded-lg text-xs font-medium">
+        <div className="flex items-center gap-1.5 p-1 bg-slate-900 border border-slate-800 rounded-lg text-xs font-medium flex-wrap">
           <button
             onClick={() => setSubTab('all')}
             className={`px-3 py-1.5 rounded-md transition-all cursor-pointer ${
@@ -95,7 +133,17 @@ export const PrintedView: React.FC<PrintedViewProps> = ({
             }`}
           >
             <PhoneCall className="w-3.5 h-3.5 text-amber-400" />
-            <span>فئة أ: دون هاتف إضافي</span>
+            <span>فئة أ: دون هاتف إضافي مؤكد</span>
+          </button>
+          <button
+            onClick={() => setSubTab('pending_validation')}
+            className={`px-3 py-1.5 rounded-md transition-all flex items-center gap-1.5 cursor-pointer ${
+              subTab === 'pending_validation'
+                ? 'bg-amber-500/10 text-amber-300 border border-amber-500/20 shadow-sm'
+                : 'text-slate-400 hover:text-amber-400'
+            }`}
+          >
+            <span>قيد فحص الهاتف</span>
           </button>
           <button
             onClick={() => setSubTab('low_delivery')}
@@ -106,6 +154,16 @@ export const PrintedView: React.FC<PrintedViewProps> = ({
             }`}
           >
             <span>فئة ج: نسبة تسليم &lt; 70%</span>
+          </button>
+          <button
+            onClick={() => setSubTab('unknown_delivery')}
+            className={`px-3 py-1.5 rounded-md transition-all flex items-center gap-1.5 cursor-pointer ${
+              subTab === 'unknown_delivery'
+                ? 'bg-slate-800 text-slate-100 shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <span>نسبة تسليم غير معروفة</span>
           </button>
         </div>
       </div>

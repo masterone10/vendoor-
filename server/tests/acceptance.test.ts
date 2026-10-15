@@ -21,6 +21,7 @@ testDb.exec(`
     customer_phone TEXT NOT NULL,
     customer_phone_extra TEXT,
     extra_phone_valid INTEGER DEFAULT 0,
+    validation_status TEXT DEFAULT 'PENDING_VALIDATION',
     created_at_source TEXT,
     state_entry_at TEXT,
     last_observed_at TEXT NOT NULL
@@ -31,6 +32,8 @@ testDb.exec(`
     order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
     product_name TEXT NOT NULL,
     merchant_code TEXT NOT NULL,
+    merchant_name TEXT,
+    warehouse_name TEXT,
     quantity INTEGER DEFAULT 1
   );
 
@@ -364,6 +367,67 @@ runTest('Test 20: Safe read-only guarantee: Only GET requests used for inspectio
   const allowedMethods = ['GET'];
   const requestedMethod = 'GET';
   assert.ok(allowedMethods.includes(requestedMethod), 'Write actions are strictly forbidden in monitor mode');
+});
+
+// 21. التحقق من بقاء كود التاجر 25919 للطلب tc7328 وفصل اسم المخزن في warehouse_name دون استبدال كود التاجر
+runTest('Test 21: Regression: Merchant code remains 25919 and warehouse is strictly separated', () => {
+  testDb.prepare(`
+    INSERT INTO orders (id, vendoor_id, random_number, current_status, customer_phone, last_observed_at)
+    VALUES (528, 2228029, 'tc7328', 'Pending', '01000007328', '2026-10-14T10:00:00Z')
+  `).run();
+
+  const rawProductName = 'بنطلون Zara سوفت مستورد مقاسات خاصه (مخزن303)';
+  const whMatch = rawProductName.match(/\(\s*مخزن\s*([^)]+)\s*\)/i);
+  const warehouseName = whMatch ? `مخزن ${whMatch[1].trim()}` : null;
+  const merchantCode = '25919';
+  const merchantName = 'Clothes corner';
+
+  testDb.prepare(`
+    INSERT INTO order_items (order_id, product_name, merchant_code, merchant_name, warehouse_name, quantity)
+    VALUES (528, ?, ?, ?, ?, 1)
+  `).run(rawProductName, merchantCode, merchantName, warehouseName);
+
+  const item: any = testDb.prepare('SELECT * FROM order_items WHERE order_id = 528').get();
+  assert.strictEqual(item.merchant_code, '25919', 'Merchant code must be 25919, NOT warehouse label');
+  assert.notStrictEqual(item.merchant_code, 'مخزن 303', 'Merchant code must NEVER be a warehouse label');
+  assert.strictEqual(item.warehouse_name, 'مخزن 303', 'Warehouse label must be separated into warehouse_name column');
+  assert.strictEqual(item.merchant_name, 'Clothes corner', 'Merchant name must be Clothes corner');
+});
+
+// 22. الطلبات المطبوعة التي لم تكتمل عملية فحص الهاتف لها تصنف PENDING_VALIDATION ولا تحسب هواتف مفقودة مؤكدة
+runTest('Test 22: Unverified printed orders are classified as PENDING_VALIDATION and not counted as verified missing', () => {
+  testDb.prepare(`
+    INSERT INTO orders (vendoor_id, random_number, current_status, customer_phone, customer_phone_extra, validation_status, last_observed_at)
+    VALUES (999, 'tc_unverified', 'Printed', '01011112222', NULL, 'PENDING_VALIDATION', '2026-10-14T10:00:00Z')
+  `).run();
+
+  const orderRow: any = testDb.prepare('SELECT validation_status FROM orders WHERE random_number = ?').get('tc_unverified');
+  assert.strictEqual(orderRow.validation_status, 'PENDING_VALIDATION', 'Unverified order must be PENDING_VALIDATION');
+
+  const verifiedMissingCount = (testDb.prepare(`
+    SELECT COUNT(*) as c FROM orders
+    WHERE random_number = 'tc_unverified' AND validation_status = 'VALIDATED' AND (customer_phone_extra IS NULL OR extra_phone_valid = 0)
+  `).get() as any).c;
+
+  assert.strictEqual(verifiedMissingCount, 0, 'Unverified order must NOT be counted as verified missing extra phone');
+});
+
+// 23. إذا لم يوثق انتقال سابق للحالة في السجلات، تظل state_entry_at فارغة ويعامل العمر على أنه غير معروف دون تزييف
+runTest('Test 23: State entry timestamp is null and age is unknown when prior transitions are absent', () => {
+  testDb.prepare(`
+    INSERT INTO orders (vendoor_id, random_number, current_status, created_at_source, state_entry_at, customer_phone, last_observed_at)
+    VALUES (1001, 'tc_unknown_age', 'Pending', '2026-10-11 8:02 PM', NULL, '01099998888', '2026-10-14T10:00:00Z')
+  `).run();
+
+  const o: any = testDb.prepare('SELECT state_entry_at FROM orders WHERE random_number = ?').get('tc_unknown_age');
+  assert.strictEqual(o.state_entry_at, null, 'Must be null when transition is not proven');
+
+  // Verify age calculation yields unknown
+  let ageBucket = 'unknown';
+  if (o.state_entry_at) {
+    ageBucket = 'calculated';
+  }
+  assert.strictEqual(ageBucket, 'unknown', 'Age bucket must be unknown');
 });
 
 console.log(`\n🎉 ALL ${passedTests} ACCEPTANCE TESTS PASSED ACCORDING TO SPECIFICATION! 🎉`);

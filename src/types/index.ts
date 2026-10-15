@@ -99,7 +99,9 @@ export interface DashboardStats {
   riskIndicators: {
     multiMerchantPrinted: number;
     lowDeliveryRatePrinted: number;
+    unknownDeliveryRatePrinted: number;
     missingExtraPhonePrinted: number;
+    unverifiedExtraPhonePrinted: number;
     openAlertsCount: number;
   };
   todayActivity: {
@@ -114,12 +116,14 @@ export interface DashboardStats {
     twoToFourDays: number;
     fourToFiveDays: number;
     overFiveDays: number;
+    unknown?: number;
     total: number;
   };
   processingAge: {
     twoToFourDays: number;
     fourToFiveDays: number;
     overFiveDays: number;
+    unknown?: number;
     total: number;
   };
   syncStatus: SyncStatus;

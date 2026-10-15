@@ -180,22 +180,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
         </button>
       </div>
-
-      {/* Account Info Footer */}
-      <div className="p-4 border-t border-slate-800 bg-slate-950/40 text-xs text-slate-400 space-y-1">
-        <div className="flex items-center justify-between">
-          <span className="text-slate-500">حساب المراقبة:</span>
-          <span className="font-mono text-slate-300 font-medium">Ziad@vendoor.com</span>
-        </div>
-        <div className="flex items-center justify-between">
-          <span className="text-slate-500">المنطقة الزمنية:</span>
-          <span className="text-slate-300">Africa/Cairo</span>
-        </div>
-        <div className="flex items-center justify-between pt-1">
-          <span className="text-slate-500">وضع الوصول:</span>
-          <span className="text-emerald-400 font-medium">قراءة وتحقق فقط</span>
-        </div>
-      </div>
     </aside>
   );
 };

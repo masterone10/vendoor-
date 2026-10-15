@@ -1,14 +1,7 @@
 import React from 'react';
 import {
   AlertTriangle,
-  Clock,
-  Printer,
   RotateCw,
-  ShoppingBag,
-  XCircle,
-  FileSpreadsheet,
-  CheckCircle2,
-  Calendar,
   Layers,
   ChevronLeft,
 } from 'lucide-react';
@@ -18,10 +11,10 @@ interface DashboardViewProps {
   stats: DashboardStats | null;
   selectedDate: string;
   onFilterStatus: (status: string) => void;
-  onFilterConfirmationAge: (category: string) => void;
-  onNavigateToPrintedTab: (subTab: 'all' | 'no_extra_phone' | 'multi_merchant' | 'low_delivery') => void;
-  onNavigateToPending: () => void;
-  onNavigateToProcessing: () => void;
+  onFilterConfirmationAge?: (category: string) => void;
+  onNavigateToPrintedTab: (subTab: 'all' | 'no_extra_phone' | 'multi_merchant' | 'low_delivery' | 'pending_validation' | 'unknown_delivery') => void;
+  onNavigateToPending?: () => void;
+  onNavigateToProcessing?: () => void;
   onNavigateToAlerts: () => void;
 }
 
@@ -29,10 +22,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   stats,
   selectedDate,
   onFilterStatus,
-  onFilterConfirmationAge,
   onNavigateToPrintedTab,
-  onNavigateToPending,
-  onNavigateToProcessing,
   onNavigateToAlerts,
 }) => {
   if (!stats) {
@@ -46,20 +36,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     );
   }
 
-  const { currentCounts, confirmationAges, riskIndicators, todayActivity, pendingAge, processingAge } = stats;
+  const { currentCounts, riskIndicators } = stats;
 
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
-      {/* Page Title & Subtitle with Business Date */}
+      {/* Page Title */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-4">
         <div>
           <h2 className="text-xl font-bold text-slate-100 flex items-center gap-2">
             <span>لوحة المؤشرات والعمليات</span>
-            <span className="text-xs font-normal text-slate-500 font-mono">(Africa/Cairo)</span>
           </h2>
-          <p className="text-xs text-slate-400 mt-0.5">
-            تاريخ التشغيل المعتمد: <span className="font-mono text-amber-400 font-bold">{selectedDate}</span> {stats.isToday ? '· (بيانات حية)' : '· (بيانات تاريخية محفوظة)'}
-          </p>
         </div>
       </div>
 
@@ -70,7 +56,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <Layers className="w-3.5 h-3.5 text-amber-500" />
             <span>حالات الطلبات الأساسية {stats.isToday ? '(الطلبات الحالية في النظام)' : `(نهاية يوم ${selectedDate})`}</span>
           </h3>
-          <span className="text-[11px] text-slate-500">اضغط على أي بطاقة لعرض الطلبات المطابقة</span>
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
@@ -191,7 +176,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
             <span>مؤشرات المخاطر الحرجة (محرك التنبيهات المباشر)</span>
           </h3>
-          <span className="text-[11px] text-slate-500">فحص فوري عند انتقال الطلب إلى التأكيد</span>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
@@ -214,9 +198,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <div className="text-2xl font-bold font-mono text-rose-400">
               {riskIndicators.multiMerchantPrinted}
             </div>
-            <p className="mt-1.5 text-[11px] text-slate-400 leading-relaxed">
-              طلبات مؤكدة تحتوي منتجات من أكثر من كود تاجر مستقل.
-            </p>
           </div>
 
           {/* Missing Extra Phone */}
@@ -226,14 +207,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           >
             <div className="flex items-center justify-between text-xs text-amber-400 mb-2">
               <span className="font-semibold">دون هاتف إضافي صالح</span>
-              <span className="text-[10px] text-slate-500 font-mono">تأكيد</span>
+              <span className="text-[10px] text-slate-500 font-mono">فئة أ</span>
             </div>
-            <div className="text-2xl font-bold font-mono text-amber-400">
-              {riskIndicators.missingExtraPhonePrinted}
+            <div className="flex items-baseline gap-2">
+              <div className="text-2xl font-bold font-mono text-amber-400">
+                {riskIndicators.missingExtraPhonePrinted}
+              </div>
+              <span className="text-xs text-slate-400 font-mono">مؤكد</span>
+              {riskIndicators.unverifiedExtraPhonePrinted > 0 && (
+                <span className="text-xs text-slate-500 font-mono border-r border-slate-800 pr-2">
+                  قيد الفحص: {riskIndicators.unverifiedExtraPhonePrinted}
+                </span>
+              )}
             </div>
-            <p className="mt-1.5 text-[11px] text-slate-400 leading-relaxed">
-              طلبات مطبوعة لم يسجل بها هاتف إضافي أو بصيغة غير صالحة.
-            </p>
           </div>
 
           {/* Delivery Rate < 70% */}
@@ -243,14 +229,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           >
             <div className="flex items-center justify-between text-xs text-rose-400 mb-2">
               <span className="font-semibold">نسبة تسليم أقل من 70%</span>
-              <span className="text-[10px] text-slate-500 font-mono">&lt; 70%</span>
+              <span className="text-[10px] text-slate-500 font-mono">فئة ج</span>
             </div>
-            <div className="text-2xl font-bold font-mono text-rose-400">
-              {riskIndicators.lowDeliveryRatePrinted}
+            <div className="flex items-baseline gap-2">
+              <div className="text-2xl font-bold font-mono text-rose-400">
+                {riskIndicators.lowDeliveryRatePrinted}
+              </div>
+              <span className="text-xs text-slate-400 font-mono">مؤكد</span>
+              {riskIndicators.unknownDeliveryRatePrinted > 0 && (
+                <span className="text-xs text-slate-500 font-mono border-r border-slate-800 pr-2">
+                  غير معروف: {riskIndicators.unknownDeliveryRatePrinted}
+                </span>
+              )}
             </div>
-            <p className="mt-1.5 text-[11px] text-slate-400 leading-relaxed">
-              عملاء لديهم سجل تاريخي بنسبة استلام منخفضة (&lt; 70%).
-            </p>
           </div>
 
           {/* Open Critical Alerts */}
@@ -264,186 +255,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
             <div className="text-2xl font-bold font-mono text-slate-100">
               {riskIndicators.openAlertsCount}
-            </div>
-            <p className="mt-1.5 text-[11px] text-slate-400 leading-relaxed">
-              تنبيهات تنتظر المراجعة واتخاذ الإجراء من مشرف العمليات.
-            </p>
-          </div>
-        </div>
-      </section>
-
-      {/* 3. Confirmation Age Pages & Today's Activity */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Confirmation Age Categories */}
-        <section className="p-5 rounded-xl bg-slate-900 border border-slate-800 space-y-3">
-          <div className="flex items-center justify-between border-b border-slate-800/60 pb-3">
-            <h3 className="text-sm font-bold text-slate-200 flex items-center gap-2">
-              <Calendar className="w-4 h-4 text-emerald-400" />
-              <span>فئات عمر الطلبات المؤكدة (قوائم Vendoor الأصلية)</span>
-            </h3>
-            <span className="text-xs text-slate-500">محدث من صفحات التأكيد</span>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3 pt-1">
-            <button
-              onClick={() => onFilterConfirmationAge('1_day')}
-              className="p-3 text-right rounded-lg bg-slate-950/60 border border-slate-800/80 hover:border-slate-700 hover:bg-slate-800/40 transition-all cursor-pointer group"
-            >
-              <div className="text-xs text-slate-400">مؤكدة منذ يوم</div>
-              <div className="text-xl font-bold font-mono text-emerald-400 mt-1">
-                {confirmationAges['1_day']}
-              </div>
-            </button>
-
-            <button
-              onClick={() => onFilterConfirmationAge('2_days')}
-              className="p-3 text-right rounded-lg bg-slate-950/60 border border-slate-800/80 hover:border-slate-700 hover:bg-slate-800/40 transition-all cursor-pointer group"
-            >
-              <div className="text-xs text-slate-400">مؤكدة منذ يومين</div>
-              <div className="text-xl font-bold font-mono text-emerald-400 mt-1">
-                {confirmationAges['2_days']}
-              </div>
-            </button>
-
-            <button
-              onClick={() => onFilterConfirmationAge('3_days')}
-              className="p-3 text-right rounded-lg bg-slate-950/60 border border-slate-800/80 hover:border-slate-700 hover:bg-slate-800/40 transition-all cursor-pointer group"
-            >
-              <div className="text-xs text-slate-400">مؤكدة منذ ثلاثة أيام</div>
-              <div className="text-xl font-bold font-mono text-amber-400 mt-1">
-                {confirmationAges['3_days']}
-              </div>
-            </button>
-
-            <button
-              onClick={() => onFilterConfirmationAge('over_3_days')}
-              className="p-3 text-right rounded-lg bg-slate-950/60 border border-slate-800/80 hover:border-slate-700 hover:bg-slate-800/40 transition-all cursor-pointer group"
-            >
-              <div className="text-xs text-slate-400">مؤكدة منذ أكثر من 3 أيام</div>
-              <div className="text-xl font-bold font-mono text-rose-400 mt-1">
-                {confirmationAges['over_3_days']}
-              </div>
-            </button>
-          </div>
-        </section>
-
-        {/* Today's Activity Transitions */}
-        <section className="p-5 rounded-xl bg-slate-900 border border-slate-800 space-y-3">
-          <div className="flex items-center justify-between border-b border-slate-800/60 pb-3">
-            <h3 className="text-sm font-bold text-slate-200 flex items-center gap-2">
-              <Clock className="w-4 h-4 text-sky-400" />
-              <span>مؤشرات النشاط اليومي (أحداث اليوم بتوقيت القاهرة)</span>
-            </h3>
-            <span className="text-xs text-slate-500">حسب وقت الحدث الأصلي</span>
-          </div>
-
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 pt-1">
-            <div className="p-3 rounded-lg bg-slate-950/60 border border-slate-800/80">
-              <div className="text-xs text-slate-400">أُنشئت اليوم</div>
-              <div className="text-xl font-bold font-mono text-slate-100 mt-1">
-                {todayActivity.Created}
-              </div>
-            </div>
-
-            <div className="p-3 rounded-lg bg-slate-950/60 border border-slate-800/80">
-              <div className="text-xs text-slate-400">دخلت Printed اليوم</div>
-              <div className="text-xl font-bold font-mono text-emerald-400 mt-1">
-                {todayActivity.Printed}
-              </div>
-            </div>
-
-            <div className="p-3 rounded-lg bg-slate-950/60 border border-slate-800/80">
-              <div className="text-xs text-slate-400">دخلت Pending اليوم</div>
-              <div className="text-xl font-bold font-mono text-amber-400 mt-1">
-                {todayActivity.Pending}
-              </div>
-            </div>
-
-            <div className="p-3 rounded-lg bg-slate-950/60 border border-slate-800/80">
-              <div className="text-xs text-slate-400">دخلت Processing اليوم</div>
-              <div className="text-xl font-bold font-mono text-sky-400 mt-1">
-                {todayActivity.Processing}
-              </div>
-            </div>
-
-            <div className="p-3 rounded-lg bg-slate-950/60 border border-slate-800/80">
-              <div className="text-xs text-slate-400">أُلغيت اليوم</div>
-              <div className="text-xl font-bold font-mono text-rose-400 mt-1">
-                {todayActivity.Canceled}
-              </div>
-            </div>
-          </div>
-        </section>
-      </div>
-
-      {/* 4. Delays & Age in Pending / Processing */}
-      <section className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Pending Age Breakdown */}
-        <div
-          onClick={onNavigateToPending}
-          className="p-5 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 transition-all cursor-pointer group space-y-3"
-        >
-          <div className="flex items-center justify-between border-b border-slate-800/60 pb-3">
-            <h4 className="text-sm font-bold text-amber-400 flex items-center gap-2">
-              <Clock className="w-4 h-4 text-amber-400" />
-              <span>أعمار طلبات Pending (المعلقة)</span>
-            </h4>
-            <span className="text-xs text-slate-500">إجمالي {pendingAge.total} طلب</span>
-          </div>
-
-          <div className="grid grid-cols-3 gap-2.5 pt-1 text-center">
-            <div className="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800">
-              <div className="text-[11px] text-slate-400">2 إلى 4 أيام</div>
-              <div className="text-lg font-bold font-mono text-amber-300 mt-0.5">
-                {pendingAge.twoToFourDays}
-              </div>
-            </div>
-            <div className="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800">
-              <div className="text-[11px] text-slate-400">4 إلى 5 أيام</div>
-              <div className="text-lg font-bold font-mono text-amber-400 mt-0.5">
-                {pendingAge.fourToFiveDays}
-              </div>
-            </div>
-            <div className="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800">
-              <div className="text-[11px] text-slate-400">&gt; 5 أيام (حرج)</div>
-              <div className="text-lg font-bold font-mono text-rose-400 mt-0.5">
-                {pendingAge.overFiveDays}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Processing Age Breakdown */}
-        <div
-          onClick={onNavigateToProcessing}
-          className="p-5 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 transition-all cursor-pointer group space-y-3"
-        >
-          <div className="flex items-center justify-between border-b border-slate-800/60 pb-3">
-            <h4 className="text-sm font-bold text-sky-400 flex items-center gap-2">
-              <RotateCw className="w-4 h-4 text-sky-400" />
-              <span>أعمار طلبات Processing (قيد التجهيز)</span>
-            </h4>
-            <span className="text-xs text-slate-500">إجمالي {processingAge.total} طلب</span>
-          </div>
-
-          <div className="grid grid-cols-3 gap-2.5 pt-1 text-center">
-            <div className="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800">
-              <div className="text-[11px] text-slate-400">2 إلى 4 أيام</div>
-              <div className="text-lg font-bold font-mono text-sky-300 mt-0.5">
-                {processingAge.twoToFourDays}
-              </div>
-            </div>
-            <div className="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800">
-              <div className="text-[11px] text-slate-400">4 إلى 5 أيام</div>
-              <div className="text-lg font-bold font-mono text-amber-400 mt-0.5">
-                {processingAge.fourToFiveDays}
-              </div>
-            </div>
-            <div className="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800">
-              <div className="text-[11px] text-slate-400">&gt; 5 أيام (تأخير)</div>
-              <div className="text-lg font-bold font-mono text-rose-400 mt-0.5">
-                {processingAge.overFiveDays}
-              </div>
             </div>
           </div>
         </div>
