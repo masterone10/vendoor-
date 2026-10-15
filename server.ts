@@ -2,9 +2,9 @@ import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
-import { initDatabase } from './server/db.js';
-import { apiRouter } from './server/routes.js';
-import { syncEngine } from './server/syncEngine.js';
+import { initDatabase } from './server/db.ts';
+import { apiRouter } from './server/routes.ts';
+import { syncEngine } from './server/syncEngine.ts';
 
 dotenv.config();
 

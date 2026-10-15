@@ -1,6 +1,6 @@
-import { Router, Request, Response } from 'express';
-import { db, getCairoDateString, getDailySnapshot, saveDailySnapshot, getCoverageRecord, isDateInHot } from './db.js';
-import { syncEngine } from './syncEngine.js';
+import { Router, type Request, type Response } from 'express';
+import { db, getCairoDateString, getDailySnapshot, saveDailySnapshot, getCoverageRecord, isDateInHot } from './db.ts';
+import { syncEngine } from './syncEngine.ts';
 
 export const apiRouter = Router();
 
@@ -290,7 +290,7 @@ apiRouter.get('/dashboard/stats', async (req: Request, res: Response) => {
     const multiMerchantPrinted = (db.prepare(`
       SELECT COUNT(*) as count
       FROM orders
-      WHERE current_status = 'Printed' AND multi_merchant_flag = 1
+      WHERE current_status = 'Printed' AND (multi_warehouse_flag = 1 OR multi_merchant_flag = 1)
       ${datePrintedClause}
     `).get(...datePrintedParams) as any)?.count || 0;
 
@@ -334,11 +334,16 @@ apiRouter.get('/dashboard/stats', async (req: Request, res: Response) => {
     // PENDING: strictly calculated from original order creation date in Vendoor (created_at_source)
     const nowMs = Date.now();
 
+    const datePendingClause = !isToday
+      ? 'AND (created_at_source LIKE ? OR state_entry_at LIKE ?)'
+      : '';
+    const datePendingParams = !isToday ? [`${targetDate}%`, `${targetDate}%`] : [];
+
     const pendingOrders: any[] = db.prepare(`
       SELECT created_at_source
       FROM orders
-      WHERE current_status = 'Pending'
-    `).all();
+      WHERE current_status = 'Pending' ${datePendingClause}
+    `).all(...datePendingParams);
 
     const pendingAge = {
       lessThanTwoDays: 0,
@@ -360,6 +365,11 @@ apiRouter.get('/dashboard/stats', async (req: Request, res: Response) => {
     }
 
     // PROCESSING: strictly calculated from latest qualifying actual Vendoor log action
+    const dateProcessingClause = !isToday
+      ? 'AND (o.created_at_source LIKE ? OR r.event_timestamp LIKE ? OR o.state_entry_at LIKE ?)'
+      : '';
+    const dateProcessingParams = !isToday ? [`${targetDate}%`, `${targetDate}%`, `${targetDate}%`] : [];
+
     const processingOrders: any[] = db.prepare(`
       SELECT
         o.random_number,
@@ -376,8 +386,8 @@ apiRouter.get('/dashboard/stats', async (req: Request, res: Response) => {
           LIMIT 1
         )
       ) r ON r.order_code = o.random_number
-      WHERE o.current_status = 'Processing'
-    `).all();
+      WHERE o.current_status = 'Processing' ${dateProcessingClause}
+    `).all(...dateProcessingParams);
 
     const processingAge = {
       lessThanTwoDays: 0,
@@ -467,6 +477,7 @@ apiRouter.get('/orders', async (req: Request, res: Response) => {
       lowDelivery,
       confirmationAge,
       date,
+      allDates = '0',
       startDate,
       endDate,
       syncIfMissing,
@@ -492,7 +503,7 @@ apiRouter.get('/orders', async (req: Request, res: Response) => {
     }
 
     if (multiMerchant === '1') {
-      conditions.push('multi_merchant_flag = 1');
+      conditions.push('(multi_warehouse_flag = 1 OR multi_merchant_flag = 1)');
     }
 
     if (lowDelivery === '1') {
@@ -504,10 +515,13 @@ apiRouter.get('/orders', async (req: Request, res: Response) => {
       params.push(confirmationAge);
     }
 
-    if (date) {
+    if (date && allDates !== '1') {
       if (status === 'Printed') {
         conditions.push('(printed_date LIKE ? OR (printed_date IS NULL AND created_at_source LIKE ?))');
         params.push(`${date}%`, `${date}%`);
+      } else if (status === 'New') {
+        conditions.push('created_at_source LIKE ?');
+        params.push(`${date}%`);
       } else if (status && status !== 'all') {
         conditions.push('(created_at_source LIKE ? OR state_entry_at LIKE ?)');
         params.push(`${date}%`, `${date}%`);
@@ -537,6 +551,15 @@ apiRouter.get('/orders', async (req: Request, res: Response) => {
     const countRow: any = db.prepare(`SELECT COUNT(*) as total FROM orders ${whereClause}`).get(...params);
     const total = countRow?.total || 0;
 
+    let totalAllCount = total;
+    if (status && status !== 'all') {
+      const allRow: any = db.prepare('SELECT COUNT(*) as c FROM orders WHERE current_status = ?').get(String(status));
+      totalAllCount = allRow?.c || 0;
+    } else {
+      const allRow: any = db.prepare('SELECT COUNT(*) as c FROM orders').get();
+      totalAllCount = allRow?.c || 0;
+    }
+
     const limitNum = Math.min(100, Math.max(1, parseInt(limit as string, 10) || 50));
     const offsetNum = Math.max(0, parseInt(offset as string, 10) || 0);
 
@@ -546,7 +569,8 @@ apiRouter.get('/orders', async (req: Request, res: Response) => {
         affiliate_code, affiliate_name, customer_name, customer_phone,
         customer_phone_extra, extra_phone_valid, governorate, address,
         total_price, shipping_cost, total_order, distinct_merchant_count,
-        multi_merchant_flag, delivery_rate, delivery_rate_num, delivery_rate_denom,
+        multi_merchant_flag, distinct_warehouse_count, multi_warehouse_flag,
+        delivery_rate, delivery_rate_num, delivery_rate_denom,
         cancel_rate, total_customer_orders, customer_delivery_warning,
         confirmation_age_category, state_entry_at, created_at_source,
         storage_tier, last_observed_at
@@ -558,6 +582,7 @@ apiRouter.get('/orders', async (req: Request, res: Response) => {
 
     res.json({
       total,
+      totalAllCount,
       limit: limitNum,
       offset: offsetNum,
       orders,
@@ -628,7 +653,7 @@ apiRouter.get('/printed', async (req: Request, res: Response) => {
     } else if (category === 'pending_validation') {
       conditions.push("(validation_status IS NULL OR validation_status != 'VALIDATED')");
     } else if (category === 'multi_merchant') {
-      conditions.push('multi_merchant_flag = 1');
+      conditions.push('(multi_warehouse_flag = 1 OR multi_merchant_flag = 1)');
     } else if (category === 'low_delivery') {
       conditions.push('delivery_rate IS NOT NULL AND delivery_rate < 70');
     } else if (category === 'unknown_delivery') {
@@ -651,8 +676,8 @@ apiRouter.get('/printed', async (req: Request, res: Response) => {
         id, vendoor_id, random_number, order_no, customer_name,
         customer_phone, customer_phone_extra, extra_phone_valid,
         governorate, address, total_order, printed_date, created_at_source,
-        distinct_merchant_count, multi_merchant_flag, delivery_rate,
-        delivery_rate_num, delivery_rate_denom, confirmation_age_category,
+        distinct_merchant_count, multi_merchant_flag, distinct_warehouse_count, multi_warehouse_flag,
+        delivery_rate, delivery_rate_num, delivery_rate_denom, confirmation_age_category,
         validation_status, last_observed_at
       FROM orders
       ${whereClause}
@@ -909,12 +934,20 @@ apiRouter.get('/team', async (req: Request, res: Response) => {
       otherPercent: u.actions > 0 ? Math.round((u.other / u.actions) * 1000) / 10 : 0,
     })).sort((a, b) => b.actions - a.actions);
 
+    const logsCoverage = dateLabel ? getCoverageRecord('logs', dateLabel) : null;
+
     res.json({
       period: period || (date ? 'custom_date' : (startDate ? 'custom_range' : 'today')),
       dateFilter: dateLabel,
       team: teamList,
       totalActions: events.length,
       totalUniqueOrders: new Set(events.map(e => e.order_code).filter(Boolean)).size,
+      logsCoverage: logsCoverage ? {
+        status: logsCoverage.completion_status,
+        pagesRead: logsCoverage.pages_read,
+        pagesDiscovered: logsCoverage.pages_discovered,
+        errorMessage: logsCoverage.error_message,
+      } : null,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

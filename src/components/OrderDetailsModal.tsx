@@ -261,7 +261,7 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ orderCode,
                     <span>أصناف الطلب وتوزيع المخازن ({items.length} صنف)</span>
                   </h4>
                   <span className="text-slate-400">
-                    عدد المخازن: <strong className="text-amber-400 font-mono">{order.distinct_merchant_count}</strong>
+                    عدد المخازن: <strong className="text-amber-400 font-mono">{order.distinct_warehouse_count || order.distinct_merchant_count}</strong>
                   </span>
                 </div>
 
@@ -271,7 +271,8 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ orderCode,
                       <tr className="border-b border-slate-800 bg-slate-950/80 text-slate-400">
                         <th className="py-2.5 px-3">م</th>
                         <th className="py-2.5 px-3">اسم الصنف</th>
-                        <th className="py-2.5 px-3">كود المخزن</th>
+                        <th className="py-2.5 px-3">المخزن</th>
+                        <th className="py-2.5 px-3">التاجر / كود التاجر</th>
                         <th className="py-2.5 px-3">الكود / SKU</th>
                         <th className="py-2.5 px-3">اللون</th>
                         <th className="py-2.5 px-3">المقاس</th>
@@ -287,8 +288,11 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ orderCode,
                           <td className="py-2.5 px-3 font-sans font-medium text-slate-200">
                             {item.product_name}
                           </td>
-                          <td className="py-2.5 px-3 font-sans font-bold text-rose-400">
-                            {item.merchant_code}
+                          <td className="py-2.5 px-3 font-sans font-bold text-amber-400">
+                            {item.warehouse_name || '—'}
+                          </td>
+                          <td className="py-2.5 px-3 font-sans text-rose-300">
+                            {item.merchant_name ? `${item.merchant_name} (${item.merchant_code})` : item.merchant_code}
                           </td>
                           <td className="py-2.5 px-3 text-slate-400">{item.sku || '—'}</td>
                           <td className="py-2.5 px-3 font-sans text-slate-300">{item.color || '—'}</td>

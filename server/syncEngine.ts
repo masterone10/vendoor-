@@ -5,15 +5,15 @@ import {
   isDateInHot,
   getCoverageRecord,
   saveCoverageRecord,
-  HistoricalCoverageRecord,
-} from './db.js';
+  type HistoricalCoverageRecord,
+} from './db.ts';
 import {
   vendoorClient,
-  VendoorRawOrder,
-  VendoorRawProduct,
-  ConfirmationRow,
-  LogEntry,
-} from './vendoorClient.js';
+  type VendoorRawOrder,
+  type VendoorRawProduct,
+  type ConfirmationRow,
+  type LogEntry,
+} from './vendoorClient.ts';
 
 export interface SyncEngineStatus {
   isRunning: boolean;
@@ -108,20 +108,50 @@ class SyncEngine {
   }
 
   /**
-   * Helper to normalize raw status button HTML and Arabic text into standard statuses
+   * Helper to normalize raw status button HTML and Arabic text into standard statuses.
+   * STRICT INVARIANT: Order type (نوع الطلب) is NOT order status (حالة الطلب).
+   * Never classify an order as New merely because order type contains 'جديد' (e.g. 'اوردر جديد').
+   * Never default unknown/missing to New; return 'Unknown'.
    */
   public parseStatusString(rawStatusHtml: string): string {
     if (!rawStatusHtml) return 'Unknown';
     const clean = rawStatusHtml.replace(/<[^>]+>/g, '').trim();
-    if (clean.includes('Printed') || clean.includes('طباعة') || clean.includes('مطبوع')) return 'Printed';
-    if (clean.includes('Pending') || clean.includes('معلق')) return 'Pending';
-    if (clean.includes('Processing') || clean.includes('قيد التجهيز') || clean.includes('قيد التنفيذ')) return 'Processing';
-    if (clean.includes('Canceling') || clean.includes('قيد الالغاء') || clean.includes('قيد الإلغاء')) return 'Canceling';
-    if (clean.includes('Cancel') || clean.includes('ملغي') || clean.includes('ملغى') || clean.includes('تم الإلغاء')) return 'Canceled';
-    if (clean.includes('New') || clean.includes('جديد')) return 'New';
-    if (clean.includes('Shipped') || clean.includes('شحن')) return 'Shipped';
-    if (clean.includes('Delivered') || clean.includes('تسليم')) return 'Delivered';
-    return clean || 'Unknown';
+    if (!clean) return 'Unknown';
+
+    // 1. Strict keyword matches
+    if (/\bPrinted\b/i.test(clean) || clean.includes('مطبوع') || clean.includes('طباعة')) return 'Printed';
+    if (/\bPending\b/i.test(clean) || clean.includes('معلق')) return 'Pending';
+    if (/\bProcessing\b/i.test(clean) || clean.includes('قيد التجهيز') || clean.includes('قيد التنفيذ')) return 'Processing';
+    if (/\bCanceling\b/i.test(clean) || clean.includes('قيد الالغاء') || clean.includes('قيد الإلغاء')) return 'Canceling';
+    if (/\b(?:Canceled|Cancelled)\b/i.test(clean) || clean.includes('ملغي') || clean.includes('ملغى') || clean.includes('تم الإلغاء')) return 'Canceled';
+    if (/\bShipped\b/i.test(clean) || clean.includes('تم الشحن') || clean.includes('مشحون')) return 'Shipped';
+    if (/\bDelivered\b/i.test(clean) || clean.includes('تم التسليم') || clean.includes('تم تسليمه')) return 'Delivered';
+
+    // 2. Strict New check: must NOT be "اوردر جديد" (order type) or partial phrases from product/type
+    if (clean === 'New' || clean.toLowerCase() === 'new' || clean === 'طلب جديد') return 'New';
+    if (/\bNew\b/i.test(clean) && !clean.includes('اوردر')) return 'New';
+
+    return 'Unknown';
+  }
+
+  /**
+   * Extract distinct warehouse identities from an order's products.
+   * e.g. "مخزن 303", "مخزن wav1", "مخزن Te1".
+   * Two products from the same actual warehouse count as one warehouse.
+   */
+  public extractWarehouseNames(products: VendoorRawProduct[]): string[] {
+    const whSet = new Set<string>();
+    for (const p of products) {
+      if (p.warehouse_name && String(p.warehouse_name).trim()) {
+        whSet.add(String(p.warehouse_name).trim());
+      } else if (p.name) {
+        const whMatch = p.name.match(/\(\s*مخزن\s*([^)]+)\s*\)/i);
+        if (whMatch) {
+          whSet.add(`مخزن ${whMatch[1].trim()}`);
+        }
+      }
+    }
+    return Array.from(whSet);
   }
 
   /**
@@ -181,22 +211,21 @@ class SyncEngine {
     try {
       console.log(`[SyncEngine] Starting ${runType} sync cycle...`);
 
-      // 1. Scan Orders: First page to get total, then paginate through
+      // 1. Scan Orders: First page to get total, then paginate through ALL pages
       const firstBatch = await vendoorClient.fetchOrdersBatch(0, 100);
       const totalOrdersInSource = firstBatch.recordsTotal;
       let allOrders: VendoorRawOrder[] = [...firstBatch.data];
 
-      // If initial or manual, fetch all remaining pages to guarantee 100% full coverage
-      if (runType === 'INITIAL' || runType === 'MANUAL' || runType === 'RECONCILIATION') {
-        const batchSize = 100;
-        for (let start = 100; start < totalOrdersInSource; start += batchSize) {
-          try {
-            const nextBatch = await vendoorClient.fetchOrdersBatch(start, batchSize);
-            allOrders = allOrders.concat(nextBatch.data);
-          } catch (err: any) {
-            console.error(`[SyncEngine] Error fetching orders batch at start ${start}:`, err.message);
-            errorsCount++;
-          }
+      // Paginate through remaining pages so orders beyond the first 100 rows are never left stale
+      const batchSize = 100;
+      for (let start = 100; start < totalOrdersInSource; start += batchSize) {
+        try {
+          const nextBatch = await vendoorClient.fetchOrdersBatch(start, batchSize);
+          allOrders = allOrders.concat(nextBatch.data);
+        } catch (err: any) {
+          console.error(`[SyncEngine] Error fetching orders batch at start ${start}:`, err.message);
+          errorsCount++;
+          break;
         }
       }
 
@@ -211,13 +240,15 @@ class SyncEngine {
           affiliate_code, affiliate_name, affiliate_id, customer_name, customer_phone,
           governorate, address, total_price, shipping_cost, total_order,
           created_at_source, shipping_date, printed_date, distinct_merchant_count,
-          multi_merchant_flag, state_entry_at, storage_tier, last_observed_at, created_at, updated_at
+          multi_merchant_flag, distinct_warehouse_count, multi_warehouse_flag,
+          state_entry_at, storage_tier, last_observed_at, created_at, updated_at
         ) VALUES (
           ?, ?, ?, ?, ?, ?,
           ?, ?, ?, ?, ?,
           ?, ?, ?, ?, ?,
           ?, ?, ?, ?,
-          ?, ?, ?, ?, ?, ?
+          ?, ?, ?,
+          ?, ?, ?, ?, ?
         )
       `);
 
@@ -240,6 +271,8 @@ class SyncEngine {
           printed_date = COALESCE(?, printed_date),
           distinct_merchant_count = ?,
           multi_merchant_flag = ?,
+          distinct_warehouse_count = ?,
+          multi_warehouse_flag = ?,
           state_entry_at = CASE WHEN current_status != ? THEN ? ELSE state_entry_at END,
           last_observed_at = ?,
           updated_at = ?
@@ -283,8 +316,11 @@ class SyncEngine {
         const currentStatus = this.parseStatusString(rawOrder.status);
         const products = rawOrder.products || [];
         const merchantCodes = this.extractMerchantCodes(products);
+        const warehouseNames = this.extractWarehouseNames(products);
         const distinctMerchantCount = merchantCodes.length;
         const isMultiMerchant = distinctMerchantCount > 1 ? 1 : 0;
+        const distinctWarehouseCount = Math.max(1, warehouseNames.length);
+        const isMultiWarehouse = warehouseNames.length > 1 ? 1 : 0;
 
         const existing: any = selectOrderStmt.get(randomNum);
         const orderCreatedAt = rawOrder.created_at || nowIso;
@@ -316,6 +352,8 @@ class SyncEngine {
             rawOrder.printed_date || null,
             distinctMerchantCount,
             isMultiMerchant,
+            distinctWarehouseCount,
+            isMultiWarehouse,
             currentStatus === 'New' ? orderCreatedAt : null, // state_entry_at: only genuine for New, null if prior transition unobserved
             orderTier,
             nowIso,
@@ -369,8 +407,9 @@ class SyncEngine {
             rawOrder.printed_date || null,
             distinctMerchantCount,
             isMultiMerchant,
+            distinctWarehouseCount,
+            isMultiWarehouse,
             currentStatus,
-            nowIso,
             nowIso,
             nowIso,
             randomNum
@@ -469,22 +508,28 @@ class SyncEngine {
           }
         }
 
-        // CRITICAL ALERT CHECK: Multiple Merchant Codes on Printed / Confirmed Orders
-        if (currentStatus === 'Printed' && isMultiMerchant === 1) {
-          const alertKey = `MULTI_MERCHANT_${randomNum}`;
+        // CRITICAL ALERT CHECK: Multiple Warehouses on Printed / Confirmed Orders
+        if (currentStatus === 'Printed' && (isMultiWarehouse === 1 || isMultiMerchant === 1)) {
+          const alertKey = `MULTI_WH_${randomNum}`;
           const existingAlert = db.prepare('SELECT id FROM alerts WHERE alert_key = ?').get(alertKey);
 
           if (!existingAlert) {
             alertsTriggered++;
             const isPreExisting = runType === 'INITIAL' ? 1 : 0;
+            const effectiveCount = Math.max(distinctWarehouseCount, distinctMerchantCount);
+            const whLabels = warehouseNames.length > 0 ? warehouseNames.join('، ') : merchantCodes.join('، ');
             const detailsJson = JSON.stringify({
               orderId: orderDbId,
               randomNumber: randomNum,
+              warehouseNames,
+              distinctWarehouseCount,
               merchantCodes,
-              distinctCount: distinctMerchantCount,
+              distinctMerchantCount,
               products: products.map(p => ({
                 id: p.id,
                 name: p.name,
+                warehouse: p.warehouse_name,
+                merchant: p.merchant_code,
                 size: p.pivot?.size,
                 color: p.pivot?.color,
                 quantity: p.pivot?.quantity,
@@ -495,11 +540,11 @@ class SyncEngine {
               alertKey,
               orderDbId,
               randomNum,
-              'MULTIPLE_MERCHANT_CODES',
+              'MULTIPLE_WAREHOUSES',
               'CRITICAL',
               'OPEN',
-              `طلب مؤكد يحتوي على ${distinctMerchantCount} مخازن مختلفة (${randomNum})`,
-              `الطلب في حالة Printed ويحتوي على أصناف تابعة لعدة مخازن: ${merchantCodes.join('، ')}`,
+              `طلب مؤكد يحتوي على ${effectiveCount} مخازن مختلفة (${randomNum})`,
+              `الطلب في حالة Printed ويحتوي على أصناف تابعة لعدة مخازن: ${whLabels}`,
               detailsJson,
               isPreExisting,
               nowIso,
@@ -510,7 +555,8 @@ class SyncEngine {
               key: alertKey,
               randomNumber: randomNum,
               severity: 'CRITICAL',
-              type: 'MULTIPLE_MERCHANT_CODES',
+              type: 'MULTIPLE_WAREHOUSES',
+              warehouseNames,
               merchantCodes,
             });
           }
@@ -651,14 +697,20 @@ class SyncEngine {
     try {
       const dateToSync = targetDate || getCairoDateString();
       const firstPage = await vendoorClient.fetchSystemLogs(1, dateToSync, dateToSync);
-      const totalPages = Math.min(firstPage.totalPages, 20); // bounded safe pagination
+      const totalPages = Math.max(1, firstPage.totalPages);
       let allEntries: LogEntry[] = [...firstPage.entries];
+      let pagesRead = 1;
+      let hasPageFailure = false;
+      let pageErrorMessage: string | null = null;
 
       for (let p = 2; p <= totalPages; p++) {
         try {
           const pageData = await vendoorClient.fetchSystemLogs(p, dateToSync, dateToSync);
           allEntries = allEntries.concat(pageData.entries);
+          pagesRead++;
         } catch (pageErr: any) {
+          hasPageFailure = true;
+          pageErrorMessage = pageErr.message;
           console.warn(`[SyncEngine] Page ${p} log fetch failed:`, pageErr.message);
           break;
         }
@@ -722,14 +774,14 @@ class SyncEngine {
         sourceDomain: 'logs',
         periodDate: dateToSync,
         storageTier: isDateInHot(dateToSync) ? 'HOT' : 'COLD',
-        pagesDiscovered: firstPage.totalPages,
-        pagesRead: totalPages,
+        pagesDiscovered: totalPages,
+        pagesRead,
         recordsExtracted: allEntries.length,
         recordsSaved: newCanonicalCount,
-        completionStatus: totalPages >= firstPage.totalPages ? 'COMPLETE' : 'PARTIAL',
-        errorMessage: totalPages < firstPage.totalPages ? `Bounded to ${totalPages}/${firstPage.totalPages} pages` : null,
+        completionStatus: !hasPageFailure && pagesRead >= totalPages ? 'COMPLETE' : 'PARTIAL',
+        errorMessage: hasPageFailure ? `Incomplete: read ${pagesRead}/${totalPages} pages. Error: ${pageErrorMessage}` : null,
         lastAttemptedAt: nowIso,
-        completedAt: totalPages >= firstPage.totalPages ? nowIso : null,
+        completedAt: !hasPageFailure && pagesRead >= totalPages ? nowIso : null,
       });
 
       return { totalLogs: allEntries.length, newSaved: newCanonicalCount };

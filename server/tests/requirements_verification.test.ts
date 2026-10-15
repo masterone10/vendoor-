@@ -5,7 +5,7 @@ import {
   getHotThresholdDate,
   isDateInHot,
   runHotColdArchival,
-} from '../db.js';
+} from '../db.ts';
 
 console.log('===============================================================');
 console.log('   VENDOOR INTELLIGENCE: 10 REQUIREMENTS VERIFICATION SUITE    ');
@@ -422,7 +422,7 @@ async function runAll() {
   // Requirement 11: Critical Business Rule — Different Age Calculation for Pending & Processing
   // --------------------------------------------------------------------------
   await test('Req 11.1: Pending order age strictly uses created_at_source and ignores recent log edits/notes', async () => {
-    const { parseSourceTimestamp, computeAgeAndBucket } = await import('../routes.js');
+    const { parseSourceTimestamp, computeAgeAndBucket } = await import('../routes.ts');
     const fixedNowMs = new Date('2026-10-15T12:00:00+03:00').getTime();
 
     // Pending order created 3 days ago in Vendoor
@@ -445,7 +445,7 @@ async function runAll() {
   });
 
   await test('Req 11.2: Processing order age strictly uses latest genuine log action, or unknown if absent (never falls back to creation date)', async () => {
-    const { parseSourceTimestamp, computeAgeAndBucket } = await import('../routes.js');
+    const { parseSourceTimestamp, computeAgeAndBucket } = await import('../routes.ts');
     const fixedNowMs = new Date('2026-10-15T12:00:00+03:00').getTime();
 
     const memDb = new DatabaseSync(':memory:');
@@ -524,7 +524,7 @@ async function runAll() {
   });
 
   await test('Req 11.3: Age buckets are mutually exclusive, exhaustive, and exact across all boundaries', async () => {
-    const { computeAgeAndBucket } = await import('../routes.js');
+    const { computeAgeAndBucket } = await import('../routes.ts');
     const nowMs = 1000000000000;
     const msPerDay = 24 * 60 * 60 * 1000;
 
@@ -598,7 +598,7 @@ async function runAll() {
   });
 
   await test('Req 11.5: KPI bucket counts match exact distinct orders list without product multiplication', async () => {
-    const { computeAgeAndBucket, parseSourceTimestamp } = await import('../routes.js');
+    const { computeAgeAndBucket, parseSourceTimestamp } = await import('../routes.ts');
     const nowMs = new Date('2026-10-15T12:00:00+03:00').getTime();
 
     const memDb = new DatabaseSync(':memory:');

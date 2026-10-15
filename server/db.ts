@@ -7,7 +7,10 @@ if (!fs.existsSync(DB_DIR)) {
   fs.mkdirSync(DB_DIR, { recursive: true });
 }
 
-const DB_PATH = process.env.DATABASE_PATH || path.join(DB_DIR, 'vendoor_intelligence.sqlite');
+const envDbPath = process.env.DATABASE_PATH;
+const DB_PATH = (envDbPath && envDbPath !== 'false' && envDbPath !== 'true' && envDbPath !== 'undefined')
+  ? envDbPath
+  : path.join(DB_DIR, 'vendoor_intelligence.sqlite');
 
 export const db = new DatabaseSync(DB_PATH);
 
@@ -311,6 +314,8 @@ export function initDatabase() {
   tryRunMigration("ALTER TABLE orders ADD COLUMN validation_status TEXT DEFAULT 'PENDING_VALIDATION'");
   tryRunMigration("ALTER TABLE orders ADD COLUMN storage_tier TEXT DEFAULT 'HOT'");
   tryRunMigration("ALTER TABLE orders ADD COLUMN canceling_date TEXT");
+  tryRunMigration("ALTER TABLE orders ADD COLUMN distinct_warehouse_count INTEGER DEFAULT 1");
+  tryRunMigration("ALTER TABLE orders ADD COLUMN multi_warehouse_flag INTEGER DEFAULT 0");
   tryRunMigration("ALTER TABLE order_items ADD COLUMN merchant_name TEXT");
   tryRunMigration("ALTER TABLE order_items ADD COLUMN warehouse_name TEXT");
   tryRunMigration("ALTER TABLE order_status_events ADD COLUMN storage_tier TEXT DEFAULT 'HOT'");
@@ -370,6 +375,50 @@ export function initDatabase() {
     populateInitialCoverageFromExistingData();
   } catch (err: any) {
     console.warn('[DB] Warning populating initial coverage:', err.message);
+  }
+
+  // Backfill warehouse data from product lines
+  try {
+    backfillWarehouseData();
+  } catch (err: any) {
+    console.warn('[DB] Warning backfilling warehouse data:', err.message);
+  }
+}
+
+export function backfillWarehouseData() {
+  // 1. Backfill order_items.warehouse_name where missing
+  const itemsWithoutWh: any[] = db.prepare(`
+    SELECT id, product_name FROM order_items
+    WHERE (warehouse_name IS NULL OR warehouse_name = '') AND product_name LIKE '%مخزن%'
+  `).all();
+
+  const updateItemStmt = db.prepare('UPDATE order_items SET warehouse_name = ? WHERE id = ?');
+  for (const item of itemsWithoutWh) {
+    const m = (item.product_name as string).match(/\(\s*مخزن\s*([^)]+)\s*\)/i);
+    if (m) {
+      updateItemStmt.run(`مخزن ${m[1].trim()}`, item.id);
+    }
+  }
+
+  // 2. Backfill distinct_warehouse_count on orders
+  const ordersWithItems: any[] = db.prepare(`
+    SELECT order_id, COUNT(DISTINCT warehouse_name) as wh_count
+    FROM order_items
+    WHERE warehouse_name IS NOT NULL AND warehouse_name != ''
+    GROUP BY order_id
+  `).all();
+
+  const updateOrderWhStmt = db.prepare(`
+    UPDATE orders
+    SET distinct_warehouse_count = ?,
+        multi_warehouse_flag = ?
+    WHERE id = ?
+  `);
+
+  for (const ow of ordersWithItems) {
+    const cnt = Math.max(1, ow.wh_count);
+    const multi = cnt > 1 ? 1 : 0;
+    updateOrderWhStmt.run(cnt, multi, ow.order_id);
   }
 }
 

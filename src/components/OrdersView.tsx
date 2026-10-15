@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Filter, Eye, AlertTriangle, Layers, ChevronRight, ChevronLeft } from 'lucide-react';
+import { Search, Filter, Eye, AlertTriangle, Layers, ChevronRight, ChevronLeft, Calendar } from 'lucide-react';
 import { Order } from '../types';
 
 interface OrdersViewProps {
@@ -15,6 +15,8 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
 }) => {
   const [orders, setOrders] = useState<Order[]>([]);
   const [total, setTotal] = useState(0);
+  const [totalAllCount, setTotalAllCount] = useState(0);
+  const [showAllDates, setShowAllDates] = useState(false);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState(initialStatus);
   const [search, setSearch] = useState('');
@@ -32,7 +34,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
 
   useEffect(() => {
     fetchOrders();
-  }, [status, page, multiOnly, lowDeliveryOnly, selectedDate]);
+  }, [status, page, multiOnly, lowDeliveryOnly, selectedDate, showAllDates]);
 
   async function fetchOrders() {
     const requestId = ++activeRequestIdRef.current;
@@ -43,7 +45,8 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
       if (search) params.set('search', search);
       if (multiOnly) params.set('multiMerchant', '1');
       if (lowDeliveryOnly) params.set('lowDelivery', '1');
-      if (selectedDate) params.set('date', selectedDate);
+      if (selectedDate && !showAllDates) params.set('date', selectedDate);
+      if (showAllDates) params.set('allDates', '1');
       params.set('limit', String(limit));
       params.set('offset', String(page * limit));
 
@@ -52,6 +55,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
       if (requestId === activeRequestIdRef.current) {
         setOrders(data.orders || []);
         setTotal(data.total || 0);
+        setTotalAllCount(data.totalAllCount || data.total || 0);
       }
     } catch (err) {
       if (requestId === activeRequestIdRef.current) {

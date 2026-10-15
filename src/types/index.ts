@@ -6,6 +6,8 @@ export interface OrderItem {
   product_name: string;
   merchant_code: string;
   merchant_id: string | null;
+  merchant_name?: string | null;
+  warehouse_name?: string | null;
   sku: string | null;
   size: string | null;
   color: string | null;
@@ -36,6 +38,8 @@ export interface Order {
   total_order: number;
   distinct_merchant_count: number;
   multi_merchant_flag: number;
+  distinct_warehouse_count?: number;
+  multi_warehouse_flag?: number;
   delivery_rate: number | null;
   delivery_rate_num: number | null;
   delivery_rate_denom: number | null;

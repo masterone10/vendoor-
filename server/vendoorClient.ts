@@ -370,59 +370,87 @@ class VendoorClient {
       over_three: 'over/three/day/order/confirmation',
     };
 
-    const res = await fetch(`${this.baseUrl}/dashboard/${pathMap[category]}`, {
-      headers: {
-        'User-Agent': this.userAgent,
-        'Cookie': this.getCookieHeader(),
-      },
-    });
+    const fetchSinglePage = async (page: number): Promise<{ rows: ConfirmationRow[]; totalPages: number }> => {
+      const url = new URL(`${this.baseUrl}/dashboard/${pathMap[category]}`);
+      if (page > 1) url.searchParams.set('page', String(page));
 
-    this.updateCookies(res);
+      const res = await fetch(url.toString(), {
+        headers: {
+          'User-Agent': this.userAgent,
+          'Cookie': this.getCookieHeader(),
+        },
+      });
 
-    if (!res.ok) {
-      throw new Error(`Failed to fetch confirmation page for ${category}: HTTP ${res.status}`);
-    }
+      this.updateCookies(res);
 
-    const html = await res.text();
-    const rows: ConfirmationRow[] = [];
-
-    // Parse table rows
-    const trRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
-    let match;
-    let isFirstRow = true;
-
-    while ((match = trRegex.exec(html)) !== null) {
-      const rowContent = match[1];
-      if (isFirstRow) {
-        // Skip table header
-        isFirstRow = false;
-        continue;
+      if (!res.ok) {
+        throw new Error(`Failed to fetch confirmation page for ${category} (page ${page}): HTTP ${res.status}`);
       }
 
-      const tdMatches = [...rowContent.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map(m =>
-        m[1].replace(/<[^>]+>/g, '').trim()
-      );
+      const html = await res.text();
+      const pageRows: ConfirmationRow[] = [];
 
-      if (tdMatches.length >= 12) {
-        // Format: [index, invoiceNo, orderType, printedDate, affiliateCode, randomNumber/bill, affiliateName, customerName, phone, governorate, address, totalOrder, status]
-        rows.push({
-          invoiceNo: tdMatches[1],
-          orderType: tdMatches[2] || 'اوردر جديد',
-          printedDate: tdMatches[3],
-          affiliateCode: tdMatches[4],
-          randomNumber: tdMatches[5], // column labeled 'رقم البوليصة' contains the random code e.g. uq8853
-          affiliateName: tdMatches[6],
-          customerName: tdMatches[7],
-          phone: tdMatches[8],
-          governorate: tdMatches[9],
-          address: tdMatches[10],
-          totalOrder: parseFloat(tdMatches[11]) || 0,
-          status: tdMatches[12] || 'Printed',
-        });
+      // Parse table rows
+      const trRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+      let match;
+      let isFirstRow = true;
+
+      while ((match = trRegex.exec(html)) !== null) {
+        const rowContent = match[1];
+        if (isFirstRow) {
+          // Skip table header
+          isFirstRow = false;
+          continue;
+        }
+
+        const tdMatches = [...rowContent.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map(m =>
+          m[1].replace(/<[^>]+>/g, '').trim()
+        );
+
+        if (tdMatches.length >= 12) {
+          pageRows.push({
+            invoiceNo: tdMatches[1],
+            orderType: tdMatches[2] || 'اوردر جديد',
+            printedDate: tdMatches[3],
+            affiliateCode: tdMatches[4],
+            randomNumber: tdMatches[5], // column labeled 'رقم البوليصة' contains the random code e.g. uq8853
+            affiliateName: tdMatches[6],
+            customerName: tdMatches[7],
+            phone: tdMatches[8],
+            governorate: tdMatches[9],
+            address: tdMatches[10],
+            totalOrder: parseFloat(tdMatches[11]) || 0,
+            status: tdMatches[12] || 'Printed',
+          });
+        }
+      }
+
+      // Check for pagination links
+      let maxPage = page;
+      const pageMatches = [...html.matchAll(/page=(\d+)/g)].map(m => parseInt(m[1], 10));
+      if (pageMatches.length > 0) {
+        maxPage = Math.max(...pageMatches);
+      }
+
+      return { rows: pageRows, totalPages: maxPage };
+    };
+
+    const firstPage = await fetchSinglePage(1);
+    let allRows = [...firstPage.rows];
+
+    if (firstPage.totalPages > 1) {
+      for (let p = 2; p <= firstPage.totalPages; p++) {
+        try {
+          const next = await fetchSinglePage(p);
+          allRows = allRows.concat(next.rows);
+        } catch (err: any) {
+          console.warn(`[VendoorClient] Page ${p} for ${category} confirmation age failed:`, err.message);
+          break;
+        }
       }
     }
 
-    return rows;
+    return allRows;
   }
 
   public async fetchSystemLogs(page = 1, startDate = '', endDate = ''): Promise<{

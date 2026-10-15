@@ -1,6 +1,6 @@
 import assert from 'node:assert';
 import { DatabaseSync } from 'node:sqlite';
-import { getCairoDateString, getHotThresholdDate, isDateInHot } from '../db.js';
+import { getCairoDateString, getHotThresholdDate, isDateInHot } from '../db.ts';
 
 console.log('========================================================================');
 console.log('   VENDOOR: 16 HISTORICAL CACHE & DATE-ISOLATION REGRESSION TESTS       ');
